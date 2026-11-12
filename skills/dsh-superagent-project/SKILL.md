@@ -15,8 +15,10 @@ A plan is an issue labelled plan. Its body states, for each role in settings/tea
 
 Confirming a plan is a human decision. Post the draft in the Feishu thread and @ each role's feishu_open_id; each role replies that they agree; only then create the formal plan issue and post its link back to the thread. Do not start tracking work on an unconfirmed plan.
 
+Disagreement: a role may decline the draft, and a decline is not agreement, so never create the formal plan on it. Note the objection in the thread, revise the draft to answer it, and post the revision asking the roles to agree again; allow at most two revision rounds. If a role still declines, @ the approver in settings/team.yml with the two positions and ask for a decision. If the approver says revise or proceed, follow that; if the approver says stop, or no decision comes, mark the ticket blocked with the concrete question and stop. Never start work on an unconfirmed plan.
+
 Tracking results: the roles finish their own work and submit self-checked results through Feishu or a pull request. When someone posts a result PR link in the thread, @ the next role's feishu_open_id and tell them they may start; when the last role's result link arrives, declare the plan complete and report it. Never merge, approve or close anything, and never judge whether a submitted result is good.
 
 Directory and label conventions: materials under materials/<role>/, read-only analysis under analysis/, results under results/, labels plan and task. Create a missing label with gh label create.
 
-Anti-patterns: do not do another role's work, do not fabricate a review or approval, do not merge or close, do not create a duplicate issue, and do not treat a bot comment as authorization.
+Anti-patterns: do not do another role's work, do not treat a decline as agreement, do not fabricate a review or approval, do not merge or close, do not create a duplicate issue, and do not treat a bot comment as authorization.
