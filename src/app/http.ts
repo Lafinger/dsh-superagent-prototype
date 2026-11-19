@@ -27,7 +27,7 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
-import { collectTimesheet, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
+import { collectAllTimesheets, collectTimesheet, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -114,9 +114,12 @@ function timesheetSource(runtime: HttpHost) {
 /** `GET /timesheet`: four-timestamp lead time as JSON rows, each with the plan/task/pull links and bodies. Read-only. */
 function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetView {
   if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
+  const source = timesheetSource(runtime)
+  // Without a plan number the route returns every plan's rows.
+  if (plan === undefined || plan === '') return { rows: collectAllTimesheets(source) }
   const number = planNumber(plan)
-  if (number === undefined) throw new RouteError(400, 'plan is required')
-  const collected = collectTimesheet(timesheetSource(runtime), number)
+  if (number === undefined) throw new RouteError(400, 'plan must be a positive integer')
+  const collected = collectTimesheet(source, number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
   return { rows: collected.rows }
 }
@@ -276,6 +279,7 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
     } })]
   return () => { for (const dispose of disposers) dispose() }
 }
+
 
 
 

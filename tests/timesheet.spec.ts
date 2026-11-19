@@ -116,3 +116,18 @@ describe('renderMarkdown', () => {
   })
 })
 
+
+describe('threadStartByPlan', () => {
+  it('maps each plan number to the earliest trigger that links it', async () => {
+    const { threadStartByPlan } = await import('../src/app/timesheet-data.ts')
+    const triggers: Record<string, { at: string; text: string }> = {
+      origin: { at: '2026-11-16T09:51:00Z', text: '【需求】数字人 POC' },
+      later: { at: '2026-11-16T18:04:00Z', text: '计划已建：https://github.com/o/r/issues/1' },
+      other: { at: '2026-11-17T09:00:00Z', text: '新计划 https://github.com/o/r/issues/2' },
+    }
+    const tickets = [{ id: 't', origin: { triggerId: 'origin' }, inputs: [{ triggerId: 'later' }, { triggerId: 'other' }] }]
+    const starts = threadStartByPlan(tickets as never, id => triggers[id] as never)
+    expect(starts.get(1)).toBe('2026-11-16T09:51:00Z')
+    expect(starts.get(2)).toBe('2026-11-16T09:51:00Z')
+  })
+})

@@ -95,4 +95,55 @@ export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'
 }
 
 export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string { return renderMarkdown(plan, rows) }
+/** 每个计划的话题开始时刻：扫描各工单消息里出现的 `issues/<n>` 链接，取最早时间。 */
+export function threadStartByPlan(tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined): Map<number, string> {
+  const starts = new Map<number, string>()
+  for (const ticket of tickets) {
+    const origin = typeof ticket.origin?.triggerId === 'string' ? triggerOf(ticket.origin.triggerId) : undefined
+    if (!origin?.at) continue
+    const texts = [origin.text ?? '']
+    for (const input of ticket.inputs ?? []) {
+      const triggerId = (input as { triggerId?: string }).triggerId
+      const text = typeof triggerId === 'string' ? triggerOf(triggerId)?.text : undefined
+      if (text) texts.push(text)
+    }
+    const plans = new Set<number>()
+    for (const text of texts) for (const match of text.matchAll(/\/issues\/(\d+)/g)) plans.add(Number(match[1]))
+    for (const plan of plans) {
+      const known = starts.get(plan)
+      if (!known || origin.at < known) starts.set(plan, origin.at)
+    }
+  }
+  return starts
+}
 
+/** 拉取仓库里所有计划的 B1–B4 行（按计划号、任务号排序）。 */
+export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
+  const issues = asArray(ghJson(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`))
+  const plans: PlanIssue[] = []
+  const tasks: TaskIssue[] = []
+  const pulls: PullRequest[] = []
+  for (const entry of issues) {
+    const item = asObject(entry)
+    const number = Number(item.number)
+    const labels = asArray(item.labels).map(labelName)
+    if (item.pull_request) {
+      const pull = asObject(ghJson(source.cli, `repos/${source.repository}/pulls/${number}`))
+      pulls.push({ number, title: asString(pull.title), body: asString(pull.body),
+        createdAt: asString(pull.created_at), mergedAt: asString(pull.merged_at) || null })
+    } else if (labels.includes('plan')) {
+      plans.push({ number, title: asString(item.title), body: asString(item.body),
+        createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
+    } else if (labels.includes('task')) {
+      tasks.push({ number, title: asString(item.title), body: asString(item.body),
+        createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
+    }
+  }
+  const starts = threadStartByPlan(source.tickets, source.triggerOf)
+  const base = `https://github.com/${source.repository}`
+  const rows = plans.flatMap(plan => {
+    const own = tasks.filter(task => new RegExp(`归属计划[：:]\\s*#${plan.number}\\b`).test(task.body))
+    return buildRows({ plan, tasks: own, pulls, threadStartedAt: starts.get(plan.number), base })
+  })
+  return rows.sort((a, b) => a.plan - b.plan || a.task - b.task)
+}
