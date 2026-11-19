@@ -8,16 +8,26 @@ import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
 import type { DecisionListView, SearchView, ThreadDetailView, ThreadListView } from './views/threads.ts'
 import type { TicketListView } from './views/tickets.ts'
+import type { TimesheetRow } from '../sources/timesheet.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
 export type TicketFilter = typeof TICKET_FILTERS[number]
 export type ThreadFilter = typeof THREAD_FILTERS[number]
 interface Paged { offset?: number; limit?: number }
+/** Four-timestamp lead time as JSON rows, or the same table rendered as Markdown/CSV. */
+export type TimesheetView =
+  | { format: 'json'; rows: TimesheetRow[] }
+  | { format: 'md'; markdown: string; rows: number }
+  | { format: 'csv'; csv: string }
+/** Result of commenting a plan's lead-time table on its plan issue. */
+export interface TimesheetPostView { posted: boolean; plan: number; rows: number }
 /** Whether a context update was already injected into the main Session or is still pending delivery. */
 type Delivery = 'injected' | 'pending'
 
 export interface Api {
+  'GET timesheet': { query?: { plan?: string; format?: string }; response: TimesheetView }
+  'POST timesheet/post': { query?: { plan?: string }; response: TimesheetPostView }
   'GET state': { response: StateView }
   'GET overview': { response: OverviewView }
   'GET search': { query: { q: string }; response: SearchView }
@@ -50,3 +60,4 @@ type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name
 export type RouteParams<K extends keyof Api> = Params<Path<K>>
 export type ApiRequest<K extends keyof Api> = RouteParams<K> & Omit<Api[K], 'response'>
 export type ApiResponse<K extends keyof Api> = Api[K]['response']
+

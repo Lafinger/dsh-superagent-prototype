@@ -96,7 +96,7 @@ const RULES: [rule: string, file: string, says: string[], gone?: string[]][] = [
   ['The main Session never merges, closes issues or shows private Feishu content on GitHub', 'orchestrator',
     ['Never merge or enable auto-merge yourself, close issues or expose private Feishu content on GitHub.']],
   ['An Executor merges only as the delivery requirements say, closes only the plan and task issues it created and keeps private Feishu content off GitHub', 'worker',
-    ['Never merge a PR directly or enable auto-merge other than as the Delivery requirements section says, close issues other than the plan and tasks it created, or expose private Feishu content on GitHub.']],
+    ['At closing, merge the plan\'s own PRs when CI is green and every task submitted; else report blocked. Never close issues other than the plan and tasks it created, or expose private Feishu content on GitHub.']],
   ['Reading context changes nothing', 'cli', ['Do not alter remote state, authorization, or configuration while reading.']],
   ['Feishu is read as the bot, never as a person', 'cli', ['Feishu uses --as bot; unavailable content does not authorize switching to the user\'s identity.']],
   ['Every GitHub message says an automated agent wrote it', 'team/communication',
@@ -195,3 +195,5 @@ it('keeps what a model reads in a preview as written: code, angle brackets and l
   expect(triggerCard({ ...trigger,
     text }).preview).toBe('Fix `Map<string, T>` typing, see [the issue](https://github.com/acme/widgets/issues/7) **now**')
 })
+
+

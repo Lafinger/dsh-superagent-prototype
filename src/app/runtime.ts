@@ -35,6 +35,7 @@ import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
 import { stopEndNotices } from '../sources/stop-notices.ts'
+import { collectTimesheet, findPlanForEnd, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
@@ -152,6 +153,8 @@ export class Runtime extends Service implements SourceHost {
             for (const message of pullEndNotices(ended, request, setup.deployment.repository)) outbox.send(message)
             // Notify the ticket's conversations when a person stopped it, since the main Session ends it without a worker turn.
             for (const message of stopEndNotices(ended, request)) outbox.send(message)
+            // A completed plan gets its four-timestamp lead time on the plan issue; reporting only, never changes the outcome.
+            if (ended.ended?.outcome === 'completed') publishTimesheet(store, setup.deployment, ended)
           }
         } })
       // Update the `evals` health entry on every pass if an evaluation failed as unavailable within the last hour.
@@ -254,4 +257,24 @@ export class Runtime extends Service implements SourceHost {
       }
     }
   }
+}
+/**
+ * Posts the four-timestamp lead time to the plan issue a completed ticket just closed.
+ * Reporting only: a missing plan, an empty table or a failed GitHub call never changes the ticket's outcome.
+ */
+function publishTimesheet(store: Store, deployment: Deployment, ticket: Ticket): void {
+  const endedAt = ticket.ended?.at
+  if (!endedAt) return
+  setImmediate(() => {
+    try {
+      const source = { cli: deployment.github.cli, repository: deployment.repository, tickets: store.tickets.list(),
+        triggerOf: (triggerId: string) => store.triggers.get(triggerId) }
+      const plan = findPlanForEnd(source, endedAt)
+      if (plan === undefined) return
+      const collected = collectTimesheet(source, plan)
+      if (collected?.rows.length) postTimesheet(source, plan, timesheetMarkdown(collected.plan, collected.rows))
+    } catch (error) {
+      void error
+    }
+  })
 }

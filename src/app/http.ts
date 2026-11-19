@@ -3,7 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { z } from 'zod'
-import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams } from './api.ts'
+import { THREAD_FILTERS, TICKET_FILTERS, type Api, type ApiResponse, type RouteParams, type TimesheetPostView, type TimesheetView } from './api.ts'
 import { sourceSkills } from './context.ts'
 import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types'
 import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, builtInParts, defaultPrompts, savePrompts, type Prompts }
@@ -27,6 +27,7 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
+import { collectTimesheet, postTimesheet, timesheetCsv, timesheetMarkdown } from './timesheet-data.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -101,6 +102,36 @@ function setupView(runtime: HttpHost) {
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
 }
+/** Positive integer plan number from a query value, or undefined. */
+const planNumber = (value: string | undefined): number | undefined => {
+  const number = Number(value)
+  return Number.isInteger(number) && number > 0 ? number : undefined
+}
+function timesheetSource(runtime: HttpHost) {
+  return { cli: runtime.deployment.github.cli, repository: runtime.deployment.repository, tickets: runtime.store.tickets.list(),
+    triggerOf: (triggerId: string) => runtime.store.triggers.get(triggerId) }
+}
+/** `GET /timesheet`: four-timestamp lead time as Markdown, CSV text or JSON rows. Read-only. */
+function timesheetView(runtime: HttpHost, plan: string | undefined, format: string | undefined): TimesheetView {
+  if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
+  const number = planNumber(plan)
+  if (number === undefined) throw new RouteError(400, 'plan is required')
+  const collected = collectTimesheet(timesheetSource(runtime), number)
+  if (!collected) throw new RouteError(404, `Plan #${number} not found`)
+  if (format === 'csv') return { format: 'csv', csv: timesheetCsv(collected.rows) }
+  if (format === 'md') return { format: 'md', markdown: timesheetMarkdown(collected.plan, collected.rows), rows: collected.rows.length }
+  return { format: 'json', rows: collected.rows }
+}
+/** `POST /timesheet/post`: comments one plan's table on its plan issue, unless already there. */
+function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPostView {
+  if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
+  const number = planNumber(plan)
+  if (number === undefined) throw new RouteError(400, 'plan is required')
+  const collected = collectTimesheet(timesheetSource(runtime), number)
+  if (!collected) throw new RouteError(404, `Plan #${number} not found`)
+  const markdown = timesheetMarkdown(collected.plan, collected.rows)
+  return { posted: postTimesheet(timesheetSource(runtime), number, markdown), plan: number, rows: collected.rows.length }
+}
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent status` (`docs/006-deployment.md`). */
 export function stateView(runtime: HttpHost) {
   const settings = runtime.store.settings()
@@ -159,6 +190,8 @@ function routes(runtime: HttpHost): Routes {
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
+    'GET timesheet': ({ query }) => timesheetView(runtime, query.plan, query.format),
+    'POST timesheet/post': ({ query }) => timesheetPost(runtime, query.plan),
     'POST sources/:id/labels': ({ params }) => runtime.settings.refreshLabels(params.id),
     'GET threads': ({ query }) => {
       const { filter, offset, limit } = ThreadsQuery.parse(query)
@@ -245,3 +278,5 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
     } })]
   return () => { for (const dispose of disposers) dispose() }
 }
+
+

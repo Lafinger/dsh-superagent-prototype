@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { stopEndNotices } from '../src/sources/stop-notices.ts'
 import type { ChannelRef, Ticket } from '../src/core/index.ts'
 
-const feishu: ChannelRef = { source: 'feishu', address: { messageId: 'om_1', chatId: 'oc_1' } }
-const github: ChannelRef = { source: 'github', address: { number: '1' } }
+const feishu: ChannelRef = { source: 'feishu', thread: 'feishu:om_1', address: { messageId: 'om_1', chatId: 'oc_1' } }
+const github: ChannelRef = { source: 'github', thread: 'github:1', address: { number: '1' } }
 const make = (ended: Ticket['ended'], channels: ChannelRef[]): Ticket => ({ id: 't1', ended, channels } as unknown as Ticket)
 
 describe('stopEndNotices', () => {
@@ -28,3 +28,4 @@ describe('stopEndNotices', () => {
     expect(stopEndNotices(make(ended, [feishu]), 'sticky notes')[0]!.text).toContain('stopped by a person')
   })
 })
+
