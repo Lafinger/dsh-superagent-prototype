@@ -489,3 +489,9 @@ it('gives a worker the other messages of the request its ticket was accepted fro
   expect(page).toMatchObject({ batch: [{ trigger_id: other, read: `trigger/${other}` }] })
   expect(await h.runTool(`worker-${ticket.id}`, 'orchestrator_read', { resource: `trigger/${other}` })).toMatchObject({ trigger_id: other })
 })
+
+it('records the plan a ticket filed, so its lead time starts at the requirement message', async () => {
+  const { ticket, trigger, sessionId } = await h.acceptedTicket(feishu('1', '@bot 安排一个计划'))
+  await h.runTool(sessionId, 'orchestrator_report', { state: 'progress', summary: '计划已建', plan_number: 7 })
+  expect(h.runtime.store.get(KV.planLink(7))).toEqual({ ticketId: ticket.id, at: trigger.at })
+})
