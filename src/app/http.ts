@@ -27,7 +27,7 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
-import { collectTimesheet, postTimesheet, timesheetCsv, timesheetMarkdown } from './timesheet-data.ts'
+import { collectTimesheet, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -111,16 +111,14 @@ function timesheetSource(runtime: HttpHost) {
   return { cli: runtime.deployment.github.cli, repository: runtime.deployment.repository, tickets: runtime.store.tickets.list(),
     triggerOf: (triggerId: string) => runtime.store.triggers.get(triggerId) }
 }
-/** `GET /timesheet`: four-timestamp lead time as Markdown, CSV text or JSON rows. Read-only. */
-function timesheetView(runtime: HttpHost, plan: string | undefined, format: string | undefined): TimesheetView {
+/** `GET /timesheet`: four-timestamp lead time as JSON rows, each with the plan/task/pull links and bodies. Read-only. */
+function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetView {
   if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
   const number = planNumber(plan)
   if (number === undefined) throw new RouteError(400, 'plan is required')
   const collected = collectTimesheet(timesheetSource(runtime), number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  if (format === 'csv') return { format: 'csv', csv: timesheetCsv(collected.rows) }
-  if (format === 'md') return { format: 'md', markdown: timesheetMarkdown(collected.plan, collected.rows), rows: collected.rows.length }
-  return { format: 'json', rows: collected.rows }
+  return { rows: collected.rows }
 }
 /** `POST /timesheet/post`: comments one plan's table on its plan issue, unless already there. */
 function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPostView {
@@ -190,7 +188,7 @@ function routes(runtime: HttpHost): Routes {
     'GET search': ({ query }) => search(views(runtime), query.q ?? '', runtime.sourceLinks),
     'GET sources': () => sourcesStatus(views(runtime), runtime.health, setupState(runtime)),
     'GET settings': () => settingsView(store, runtime.sources, runtime.health, setupState(runtime), runtime.machine.stateDir),
-    'GET timesheet': ({ query }) => timesheetView(runtime, query.plan, query.format),
+    'GET timesheet': ({ query }) => timesheetView(runtime, query.plan),
     'POST timesheet/post': ({ query }) => timesheetPost(runtime, query.plan),
     'POST sources/:id/labels': ({ params }) => runtime.settings.refreshLabels(params.id),
     'GET threads': ({ query }) => {
@@ -278,5 +276,6 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
     } })]
   return () => { for (const dispose of disposers) dispose() }
 }
+
 
 

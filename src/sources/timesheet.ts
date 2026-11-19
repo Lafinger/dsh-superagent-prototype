@@ -1,4 +1,4 @@
-/** 工时（交付时长）v3：只记录四个时刻（B1–B4）与三段相邻差值，不做汇总、趋势或瓶颈。 */
+/** 工时（交付时长）v3.1：四个时刻 + 三段差值；行内带计划/任务/PR 的链接与正文全文。 */
 
 export interface TaskIssue {
   number: number
@@ -11,6 +11,7 @@ export interface TaskIssue {
 export interface PlanIssue {
   number: number
   title: string
+  body: string
   createdAt: string
   closedAt?: string | null
 }
@@ -25,23 +26,28 @@ export interface PullRequest {
 
 export interface TimesheetRow {
   plan: number
+  plan_url: string
+  plan_title: string
+  plan_content: string
   task: number
-  title: string
+  task_url: string
+  task_title: string
+  task_content: string
+  /** PR 字段整组缺失表示该任务没有结果 PR。 */
+  pull?: number
+  pull_url?: string
+  pull_title?: string
+  pull_content?: string
   role: string
   person: string
-  /** B1 话题开始（原始需求消息时间）*/
   b1?: string
-  /** B2 正式发布（计划 issue 创建）*/
   b2?: string
-  /** B3 首次提交（该任务第一个结果 PR）*/
   b3?: string
-  /** B4 计划完成（计划 issue 关闭）*/
   b4?: string
   planning?: number
   response?: number
   closing?: number
   total?: number
-  pull?: number
   missing: string[]
 }
 
@@ -84,9 +90,11 @@ export function buildRows(input: {
   pulls: PullRequest[]
   /** 话题开始时刻：该计划对应工单的原始需求消息时间。 */
   threadStartedAt?: string
+  /** 仓库网页根地址，例如 https://github.com/owner/name */
+  base: string
 }): TimesheetRow[] {
-  const { plan, pulls, threadStartedAt } = input
-  const rows = input.tasks
+  const { plan, pulls, threadStartedAt, base } = input
+  return input.tasks
     .map(task => {
       const meta = parseTaskMeta(task.body)
       const pull = linkPull(task, pulls)
@@ -97,15 +105,22 @@ export function buildRows(input: {
       if (!plan.closedAt) missing.push('b4')
       const row: TimesheetRow = {
         plan: meta.plan ?? plan.number,
+        plan_url: `${base}/issues/${plan.number}`,
+        plan_title: plan.title,
+        plan_content: plan.body,
         task: task.number,
-        title: task.title,
+        task_url: `${base}/issues/${task.number}`,
+        task_title: task.title,
+        task_content: task.body,
+        ...(pull
+          ? { pull: pull.number, pull_url: `${base}/pull/${pull.number}`, pull_title: pull.title, pull_content: pull.body }
+          : {}),
         role: meta.role || '—',
         person: meta.person || '—',
         ...(threadStartedAt ? { b1: threadStartedAt } : {}),
         ...(plan.createdAt ? { b2: plan.createdAt } : {}),
         ...(pull ? { b3: pull.createdAt } : {}),
         ...(plan.closedAt ? { b4: plan.closedAt } : {}),
-        ...(pull ? { pull: pull.number } : {}),
         missing,
       }
       row.planning = hours(row.b1, row.b2)
@@ -115,7 +130,6 @@ export function buildRows(input: {
       return row
     })
     .sort((a, b) => a.task - b.task)
-  return rows
 }
 
 const TIME = (iso?: string) => iso
@@ -124,7 +138,7 @@ const TIME = (iso?: string) => iso
 const SPAN = (row: TimesheetRow, key: string, value?: number) =>
   value === undefined ? (row.missing.includes(key) ? '缺失' : '—') : `${value.toFixed(1)}h`
 
-/** Markdown 表：一任务一行，带幂等标记。 */
+/** 计划 issue 的评论正文；仅内部使用，不是接口格式。 */
 export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string {
   const header = ['计划', '任务', '岗位', '负责人', 'B1 话题开始', 'B2 正式发布', 'B3 首次提交', 'B4 计划完成',
     '规划期 B2−B1', '响应期 B3−B2', '收尾期 B4−B3', '全周期 B4−B1']
@@ -155,16 +169,3 @@ export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string {
   ].join('\n')
 }
 
-/** CSV：字段与 Markdown 一致。 */
-export function renderCsv(rows: TimesheetRow[]): string {
-  const header = ['plan', 'task', 'role', 'person', 'title', 'b1', 'b2', 'b3', 'b4',
-    'planningHours', 'responseHours', 'closingHours', 'totalHours', 'pull', 'missing']
-  const cell = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`
-  const number = (value?: number) => value === undefined ? '' : value.toFixed(2)
-  return [header.join(','), ...rows.map(row => [
-    row.plan, row.task, row.role, row.person, row.title,
-    row.b1 ?? '', row.b2 ?? '', row.b3 ?? '', row.b4 ?? '',
-    number(row.planning), number(row.response), number(row.closing), number(row.total),
-    row.pull ?? '', row.missing.join('+'),
-  ].map(cell).join(','))].join('\n')
-}

@@ -1,10 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { buildRows, hours, linkPull, parseTaskMeta, renderCsv, renderMarkdown,
-  type PlanIssue, type PullRequest, type TaskIssue } from '../src/sources/timesheet.ts'
+import { buildRows, hours, linkPull, parseTaskMeta, renderMarkdown,
+  type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../src/sources/timesheet.ts'
+
+const one = (input: Parameters<typeof buildRows>[0]): TimesheetRow => buildRows(input)[0]!
+
+const base = 'https://github.com/lafinger-agent/dsh-metahuman-demo'
 
 const plan = (overrides: Partial<PlanIssue> = {}): PlanIssue => ({
   number: 1,
   title: '计划：数字人语音交互演示程序 POC',
+  body: '## 背景\n\n展厅演示用的 3D 数字人。',
   createdAt: '2026-11-16T10:04:03Z',
   closedAt: '2026-11-18T09:26:10Z',
   ...overrides,
@@ -22,7 +27,7 @@ const task = (overrides: Partial<TaskIssue> = {}): TaskIssue => ({
 const pull = (overrides: Partial<PullRequest> = {}): PullRequest => ({
   number: 4,
   title: '设计：产品说明与设计稿',
-  body: 'Closes #2',
+  body: '## 关联\n\nCloses #2',
   createdAt: '2026-11-17T02:45:37Z',
   mergedAt: '2026-11-17T07:34:07Z',
   ...overrides,
@@ -58,52 +63,56 @@ describe('hours', () => {
 })
 
 describe('buildRows', () => {
-  it('fills B1–B4 and the three spans', () => {
-    const [row] = buildRows({ plan: plan(), tasks: [task()], pulls: [pull()], threadStartedAt: threadStart })
-    expect(row!.b1).toBe(threadStart)
-    expect(row!.b2).toBe('2026-11-16T10:04:03Z')
-    expect(row!.b3).toBe('2026-11-17T02:45:37Z')
-    expect(row!.b4).toBe('2026-11-18T09:26:10Z')
-    expect(row!.missing).toEqual([])
-    expect(row!.planning).toBeCloseTo(0.21, 2)
-    expect(row!.response).toBeCloseTo(16.69, 1)
-    expect(row!.closing).toBeCloseTo(30.68, 1)
-    expect(row!.total).toBeCloseTo(47.58, 1)
+  it('fills B1–B4, the three spans, links and bodies', () => {
+    const row = one({ plan: plan(), tasks: [task()], pulls: [pull()], threadStartedAt: threadStart, base })
+    expect(row.b1).toBe(threadStart)
+    expect(row.b2).toBe('2026-11-16T10:04:03Z')
+    expect(row.b3).toBe('2026-11-17T02:45:37Z')
+    expect(row.b4).toBe('2026-11-18T09:26:10Z')
+    expect(row.missing).toEqual([])
+    expect(row.planning).toBeCloseTo(0.21, 2)
+    expect(row.response).toBeCloseTo(16.69, 1)
+    expect(row.closing).toBeCloseTo(30.68, 1)
+    expect(row.total).toBeCloseTo(47.58, 1)
+    expect(row.plan_url).toBe(`${base}/issues/1`)
+    expect(row.plan_content).toContain('展厅演示')
+    expect(row.task_url).toBe(`${base}/issues/2`)
+    expect(row.task_content).toContain('归属计划：#1')
+    expect(row.pull_url).toBe(`${base}/pull/4`)
+    expect(row.pull_content).toContain('Closes #2')
   })
 
-  it('marks a missing submission instead of guessing', () => {
-    const [row] = buildRows({ plan: plan(), tasks: [task({ closedAt: null })], pulls: [], threadStartedAt: threadStart })
-    expect(row!.missing).toContain('b3')
-    expect(row!.b3).toBeUndefined()
-    expect(row!.response).toBeUndefined()
+  it('omits the pull fields entirely when the task has no result PR', () => {
+    const row = one({ plan: plan(), tasks: [task({ closedAt: null })], pulls: [], threadStartedAt: threadStart, base })
+    expect(row.pull).toBeUndefined()
+    expect(row.pull_url).toBeUndefined()
+    expect(row.pull_title).toBeUndefined()
+    expect(row.pull_content).toBeUndefined()
+    expect(row.missing).toContain('b3')
+    expect(row.response).toBeUndefined()
   })
 
   it('keeps an unfinished plan open with B4 missing', () => {
-    const [row] = buildRows({ plan: plan({ closedAt: null }), tasks: [task()], pulls: [pull()], threadStartedAt: threadStart })
-    expect(row!.missing).toContain('b4')
-    expect(row!.total).toBeUndefined()
+    const row = one({ plan: plan({ closedAt: null }), tasks: [task()], pulls: [pull()], threadStartedAt: threadStart, base })
+    expect(row.missing).toContain('b4')
+    expect(row.total).toBeUndefined()
   })
 
   it('marks B1 missing when the thread start is unknown', () => {
-    const [row] = buildRows({ plan: plan(), tasks: [task()], pulls: [pull()] })
-    expect(row!.missing).toContain('b1')
-    expect(row!.planning).toBeUndefined()
+    const row = one({ plan: plan(), tasks: [task()], pulls: [pull()], base })
+    expect(row.missing).toContain('b1')
+    expect(row.planning).toBeUndefined()
   })
 })
 
-describe('render', () => {
+describe('renderMarkdown', () => {
   it('carries the idempotency marker and shows 缺失', () => {
-    const [row] = buildRows({ plan: plan(), tasks: [task({ closedAt: null })], pulls: [], threadStartedAt: threadStart })
-    const markdown = renderMarkdown(plan(), [row!])
+    const row = one({ plan: plan(), tasks: [task({ closedAt: null })], pulls: [], threadStartedAt: threadStart, base })
+    const markdown = renderMarkdown(plan(), [row])
     expect(markdown).toContain('<!-- dsh-timesheet -->')
     expect(markdown).toContain('缺失')
     expect(markdown).toContain('#2')
-  })
-  it('escapes quotes in CSV output', () => {
-    const [row] = buildRows({ plan: plan(), tasks: [task({ title: '任务：含"引号"的标题' })], pulls: [pull()], threadStartedAt: threadStart })
-    const csv = renderCsv([row!])
-    expect(csv.split('\n')[0]).toContain('totalHours')
-    expect(csv).toContain('""引号""')
+    expect(markdown).toContain('B1 话题开始')
   })
 })
 

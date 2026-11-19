@@ -1,7 +1,7 @@
 /** 工时数据装配 v3：读计划/任务 issue、结果 PR 与话题起点，产出 B1–B4 行，并可回贴计划 issue。 */
 import { execFileSync } from 'node:child_process'
 import type { Ticket, Trigger } from '../core/index.ts'
-import { buildRows, renderCsv, renderMarkdown, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
+import { buildRows, renderMarkdown, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
 
 /** 计划完成时回贴的评论标记，用于幂等。 */
 export const TIMESHEET_MARK = '<!-- dsh-timesheet -->'
@@ -40,6 +40,7 @@ function planIssue(cli: string, repository: string, number: number): PlanIssue {
   return {
     number,
     title: asString(item.title),
+    body: asString(item.body),
     createdAt: asString(item.created_at),
     closedAt: asString(item.closed_at) || null,
   }
@@ -66,7 +67,8 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
         createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
     }
   }
-  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt: threadStartOf(source.tickets, source.triggerOf) }) }
+  const base = `https://github.com/${source.repository}`
+  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt: threadStartOf(source.tickets, source.triggerOf), base }) }
 }
 
 /** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
@@ -93,4 +95,4 @@ export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'
 }
 
 export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string { return renderMarkdown(plan, rows) }
-export function timesheetCsv(rows: TimesheetRow[]): string { return renderCsv(rows) }
+
