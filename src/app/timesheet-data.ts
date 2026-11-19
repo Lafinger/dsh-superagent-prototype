@@ -37,6 +37,8 @@ export interface TimesheetSource {
   repository: string
   tickets: Ticket[]
   triggerOf: (id: string) => Trigger | undefined
+  /** The plan issue a ticket reported, with the requirement message time; read before any message-link match. */
+  planLinkOf: (plan: number) => { at: string } | undefined
 }
 
 
@@ -74,7 +76,8 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
   }
   const base = `https://github.com/${source.repository}`
   const starts = threadStartByPlan([plan], source.tickets, source.triggerOf)
-  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt: starts.get(plan.number), base }) }
+  const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
+  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt, base }) }
 }
 
 /** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
@@ -155,10 +158,12 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
   const base = `https://github.com/${source.repository}`
   const rows = plans.flatMap(plan => {
     const own = tasks.filter(task => new RegExp(`归属计划[：:]\\s*#${plan.number}\\b`).test(task.body))
-    return buildRows({ plan, tasks: own, pulls, threadStartedAt: starts.get(plan.number), base })
+    const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
+    return buildRows({ plan, tasks: own, pulls, threadStartedAt, base })
   })
   return rows.sort((a, b) => a.plan - b.plan || a.task - b.task)
 }
+
 
 
 

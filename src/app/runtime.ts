@@ -268,7 +268,8 @@ function publishTimesheet(store: Store, deployment: Deployment, ticket: Ticket):
   setImmediate(() => {
     try {
       const source = { cli: deployment.github.cli, repository: deployment.repository, tickets: store.tickets.list(),
-        triggerOf: (triggerId: string) => store.triggers.get(triggerId) }
+        triggerOf: (triggerId: string) => store.triggers.get(triggerId),
+        planLinkOf: (plan: number) => store.get(KV.planLink(plan)) }
       const plan = findPlanForEnd(source, endedAt)
       if (plan === undefined) return
       const collected = collectTimesheet(source, plan)

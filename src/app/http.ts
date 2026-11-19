@@ -9,6 +9,7 @@ import type { ModelCatalog } from '@deepseek-ai/dsh-api-session-controller/types
 import { PromptConflict, SKILL_NAME, SKILL_PREFIX, TEAM_SECTIONS, builtInBase, builtInParts, defaultPrompts, savePrompts, type Prompts }
   from './prompts.ts'
 import { policyVersion } from '../policy.ts'
+import { KV } from '../kv.ts'
 import { SettingsConflict, type Settings } from './settings.ts'
 import { SetupError, type SetupProblem } from '../setup.ts'
 import { UserError, type EngineForPeople, type Ticket } from '../core/index.ts'
@@ -117,7 +118,8 @@ const planNumber = (value: string | undefined): number | undefined => {
 }
 function timesheetSource(runtime: HttpHost) {
   return { cli: runtime.deployment.github.cli, repository: runtime.deployment.repository, tickets: runtime.store.tickets.list(),
-    triggerOf: (triggerId: string) => runtime.store.triggers.get(triggerId) }
+    triggerOf: (triggerId: string) => runtime.store.triggers.get(triggerId),
+    planLinkOf: (plan: number) => runtime.store.get(KV.planLink(plan)) }
 }
 /** `GET /timesheet`: four-timestamp lead time as JSON rows, each with the plan/task/pull links and bodies. Read-only. */
 function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetView {
