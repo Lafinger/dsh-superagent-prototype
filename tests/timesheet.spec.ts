@@ -139,3 +139,18 @@ describe('threadStartByPlan', () => {
 
 
 
+
+describe('asPull', () => {
+  it('reads a PR from an issues list entry, with no separate detail request', async () => {
+    const { asPull } = await import('../src/app/timesheet-data.ts')
+    const pull = asPull({ number: 4, title: 'PR 标题', body: 'Closes #2', created_at: '2026-11-17T02:45:37Z',
+      pull_request: { merged_at: '2026-11-17T07:34:07Z' } }, 4)
+    expect(pull).toEqual({ number: 4, title: 'PR 标题', body: 'Closes #2',
+      createdAt: '2026-11-17T02:45:37Z', mergedAt: '2026-11-17T07:34:07Z' })
+  })
+  it('keeps mergedAt null while the PR is open', async () => {
+    const { asPull } = await import('../src/app/timesheet-data.ts')
+    const pull = asPull({ number: 5, title: 'x', body: '', created_at: '2026-11-17T08:26:05Z', pull_request: { merged_at: null } }, 5)
+    expect(pull.mergedAt).toBeNull()
+  })
+})

@@ -17,6 +17,21 @@ const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [
 const asString = (value: unknown): string => (typeof value === 'string' ? value : '')
 const labelName = (value: unknown): string => typeof value === 'string' ? value : asString(asObject(value).name)
 
+/**
+ * Reads one result PR out of an issues-list entry: the list already returns the body and
+ * `pull_request.merged_at`, so no separate `pulls/{n}` request is needed.
+ */
+export function asPull(item: Json, number: number): PullRequest {
+  const pull = asObject(item.pull_request)
+  return {
+    number,
+    title: asString(item.title),
+    body: asString(item.body),
+    createdAt: asString(item.created_at),
+    mergedAt: asString(pull.merged_at) || null,
+  }
+}
+
 export interface TimesheetSource {
   cli: string
   repository: string
@@ -57,9 +72,8 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
     const item = asObject(entry)
     const number = Number(item.number)
     if (item.pull_request) {
-      const pull = asObject(ghJson(source.cli, `repos/${source.repository}/pulls/${number}`))
-      pulls.push({ number, title: asString(pull.title), body: asString(pull.body),
-        createdAt: asString(pull.created_at), mergedAt: asString(pull.merged_at) || null })
+      // The issues list already carries the PR body and `pull_request.merged_at`, so no per-PR request is needed.
+      pulls.push(asPull(item, number))
     } else if (asArray(item.labels).map(labelName).includes('task')) {
       const body = asString(item.body)
       if (!new RegExp(`归属计划[：:]\\s*#${planNumber}\\b`).test(body)) continue
@@ -135,9 +149,8 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
     const number = Number(item.number)
     const labels = asArray(item.labels).map(labelName)
     if (item.pull_request) {
-      const pull = asObject(ghJson(source.cli, `repos/${source.repository}/pulls/${number}`))
-      pulls.push({ number, title: asString(pull.title), body: asString(pull.body),
-        createdAt: asString(pull.created_at), mergedAt: asString(pull.merged_at) || null })
+      // The issues list already carries the PR body and `pull_request.merged_at`, so no per-PR request is needed.
+      pulls.push(asPull(item, number))
     } else if (labels.includes('plan')) {
       plans.push({ number, title: asString(item.title), body: asString(item.body),
         createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
