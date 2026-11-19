@@ -95,24 +95,41 @@ export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'
 }
 
 export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string { return renderMarkdown(plan, rows) }
-/** 每个计划的话题开始时刻：扫描各工单消息里出现的 `issues/<n>` 链接，取最早时间。 */
-export function threadStartByPlan(tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined): Map<number, string> {
+/**
+ * 每个计划的话题开始时刻。先按工单消息里出现的 `issues/<n>` 链接精确匹配；没有链接时，
+ * 取"计划创建之前最近的工单"的原始消息时间作为话题起点（计划总是紧随其需求工单产生）。
+ */
+export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined): Map<number, string> {
   const starts = new Map<number, string>()
-  for (const ticket of tickets) {
-    const origin = typeof ticket.origin?.triggerId === 'string' ? triggerOf(ticket.origin.triggerId) : undefined
-    if (!origin?.at) continue
-    const texts = [origin.text ?? '']
-    for (const input of ticket.inputs ?? []) {
-      const triggerId = (input as { triggerId?: string }).triggerId
-      const text = typeof triggerId === 'string' ? triggerOf(triggerId)?.text : undefined
-      if (text) texts.push(text)
-    }
-    const plans = new Set<number>()
-    for (const text of texts) for (const match of text.matchAll(/\/issues\/(\d+)/g)) plans.add(Number(match[1]))
-    for (const plan of plans) {
-      const known = starts.get(plan)
-      if (!known || origin.at < known) starts.set(plan, origin.at)
-    }
+  const origins = tickets
+    .map(ticket => {
+      const origin = typeof ticket.origin?.triggerId === 'string' ? triggerOf(ticket.origin.triggerId) : undefined
+      if (!origin?.at) return undefined
+      const texts = [origin.text ?? '']
+      for (const input of ticket.inputs ?? []) {
+        const triggerId = (input as { triggerId?: string }).triggerId
+        const text = typeof triggerId === 'string' ? triggerOf(triggerId)?.text : undefined
+        if (text) texts.push(text)
+      }
+      return { at: origin.at, texts }
+    })
+    .filter((item): item is { at: string; texts: string[] } => item !== undefined)
+  // 1) 显式链接优先
+  for (const plan of plans) {
+    const linked = origins
+      .filter(origin => origin.texts.some(text => new RegExp(`/issues/${plan.number}\\b`).test(text)))
+      .map(origin => origin.at)
+      .sort()
+    if (linked.length) starts.set(plan.number, linked[0]!)
+  }
+  // 2) 没有链接时，按时间就近：计划创建前最近的工单
+  for (const plan of plans) {
+    if (starts.has(plan.number)) continue
+    const earlier = origins
+      .filter(origin => !plan.createdAt || origin.at <= plan.createdAt)
+      .sort((a, b) => a.at.localeCompare(b.at))
+    const latest = earlier.at(-1)
+    if (latest) starts.set(plan.number, latest.at)
   }
   return starts
 }
@@ -139,7 +156,7 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
         createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
     }
   }
-  const starts = threadStartByPlan(source.tickets, source.triggerOf)
+  const starts = threadStartByPlan(plans, source.tickets, source.triggerOf)
   const base = `https://github.com/${source.repository}`
   const rows = plans.flatMap(plan => {
     const own = tasks.filter(task => new RegExp(`归属计划[：:]\\s*#${plan.number}\\b`).test(task.body))
@@ -147,3 +164,7 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
   })
   return rows.sort((a, b) => a.plan - b.plan || a.task - b.task)
 }
+
+
+
+
