@@ -39,16 +39,7 @@ export interface TimesheetSource {
   triggerOf: (id: string) => Trigger | undefined
 }
 
-/** 话题开始时刻：计划相关工单里最早的原始需求消息时间。 */
-export function threadStartOf(tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined): string | undefined {
-  const times = tickets
-    .map(ticket => ticket.origin?.triggerId)
-    .filter((id): id is string => typeof id === 'string')
-    .map(id => triggerOf(id)?.at)
-    .filter((at): at is string => typeof at === 'string')
-    .sort()
-  return times[0]
-}
+
 
 function planIssue(cli: string, repository: string, number: number): PlanIssue {
   const item = asObject(ghJson(cli, `repos/${repository}/issues/${number}`))
@@ -82,7 +73,8 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
     }
   }
   const base = `https://github.com/${source.repository}`
-  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt: threadStartOf(source.tickets, source.triggerOf), base }) }
+  const starts = threadStartByPlan([plan], source.tickets, source.triggerOf)
+  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt: starts.get(plan.number), base }) }
 }
 
 /** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
@@ -167,6 +159,7 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
   })
   return rows.sort((a, b) => a.plan - b.plan || a.task - b.task)
 }
+
 
 
 
