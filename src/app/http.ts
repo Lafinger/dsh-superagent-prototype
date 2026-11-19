@@ -73,9 +73,17 @@ async function readBody(req: IncomingMessage, maxBytes = 128 * 1024): Promise<un
 function json(res: ServerResponse, status: number, value: unknown): void {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' }); res.end(JSON.stringify(value))
 }
+/**
+ * Extra authorities admitted besides loopback, from `DSH_ORCHESTRATOR_TRUSTED_HOSTS` (comma separated, `host:port`).
+ * Empty by default, so a LAN client cannot reach the management API without opting in.
+ */
+function trustedHosts(): string[] {
+  return (process.env.DSH_ORCHESTRATOR_TRUSTED_HOSTS ?? '').split(',').map(host => host.trim().toLowerCase()).filter(Boolean)
+}
 export function sameOrigin(req: Pick<IncomingMessage, 'headers'>, port: number): boolean {
-  const host = req.headers.host
-  if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) return false
+  const host = String(req.headers.host ?? '').toLowerCase()
+  const local = host === `127.0.0.1:${port}` || host === `localhost:${port}`
+  if (!local && !trustedHosts().includes(host)) return false
   return req.headers['x-orchestrator-request'] === '1' && (req.headers.origin === undefined || req.headers.origin === `http://${host}`)
 }
 /** Maps errors to HTTP status codes and structured payloads that the panel localizes in the interface language. */

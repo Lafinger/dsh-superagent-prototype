@@ -96,8 +96,8 @@ export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'
 
 export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string { return renderMarkdown(plan, rows) }
 /**
- * 每个计划的话题开始时刻。先按工单消息里出现的 `issues/<n>` 链接精确匹配；没有链接时，
- * 取"计划创建之前最近的工单"的原始消息时间作为话题起点（计划总是紧随其需求工单产生）。
+ * 每个计划的话题开始时刻：只认工单消息里出现的 `issues/<n>` 链接，取最早的一条。
+ * 没有链接就留空——B1 会进入 `missing`，不做任何推断。
  */
 export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined): Map<number, string> {
   const starts = new Map<number, string>()
@@ -114,22 +114,12 @@ export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], trigger
       return { at: origin.at, texts }
     })
     .filter((item): item is { at: string; texts: string[] } => item !== undefined)
-  // 1) 显式链接优先
   for (const plan of plans) {
     const linked = origins
       .filter(origin => origin.texts.some(text => new RegExp(`/issues/${plan.number}\\b`).test(text)))
       .map(origin => origin.at)
       .sort()
     if (linked.length) starts.set(plan.number, linked[0]!)
-  }
-  // 2) 没有链接时，按时间就近：计划创建前最近的工单
-  for (const plan of plans) {
-    if (starts.has(plan.number)) continue
-    const earlier = origins
-      .filter(origin => !plan.createdAt || origin.at <= plan.createdAt)
-      .sort((a, b) => a.at.localeCompare(b.at))
-    const latest = earlier.at(-1)
-    if (latest) starts.set(plan.number, latest.at)
   }
   return starts
 }

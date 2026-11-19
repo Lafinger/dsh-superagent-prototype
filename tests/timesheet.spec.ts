@@ -127,11 +127,15 @@ describe('threadStartByPlan', () => {
     }
     const tickets = [{ id: 't', origin: { triggerId: 'origin' }, inputs: [{ triggerId: 'later' }, { triggerId: 'other' }] }]
     const plans = [{ number: 1, title: '计划一', body: '', createdAt: '2026-11-16T10:04:03Z' },
-      { number: 2, title: '计划二', body: '', createdAt: '2026-11-17T09:30:00Z' }]
+      { number: 2, title: '计划二', body: '', createdAt: '2026-11-17T09:30:00Z' },
+      { number: 3, title: '计划三', body: '', createdAt: '2026-11-18T09:30:00Z' }]
     const starts = threadStartByPlan(plans, tickets as never, id => triggers[id] as never)
     expect(starts.get(1)).toBe('2026-11-16T09:51:00Z')
     expect(starts.get(2)).toBe('2026-11-16T09:51:00Z')
+    // 没有链接的计划留空，不做推断。
+    expect(starts.has(3)).toBe(false)
   })
 })
+
 
 
