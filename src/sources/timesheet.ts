@@ -60,9 +60,20 @@ export function hours(from?: string | null, to?: string | null): number | undefi
   return Number.isFinite(delta) && delta >= 0 ? delta / HOUR : undefined
 }
 
-/** 从任务 issue 正文解析归属计划、角色、负责人。 */
+/**
+ * 任务正文声明归属计划的行。计划模板各版本分别写过「归属计划」与「所属计划」，
+ * 两种都接受，否则该任务的工时行会静默消失（buildRows 只按任务出行）。
+ */
+const PLAN_LINK = /(?:归属|所属)计划[：:]\s*#(\d+)/
+
+/** 任务正文是否声明属于该计划。 */
+export function declaresPlan(body: string, plan: number): boolean {
+  return new RegExp(`(?:归属|所属)计划[：:]\\s*#${plan}\\b`).test(body)
+}
+
+/** 从任务 issue 正文解析所属计划、角色、负责人。 */
 export function parseTaskMeta(body: string): { plan?: number; role: string; person: string } {
-  const plan = body.match(/归属计划[：:]\s*#(\d+)/)?.[1]
+  const plan = body.match(PLAN_LINK)?.[1]
   const line = body.match(/\*\*角色\*\*[：:]\s*([^\n]+)/)?.[1] ?? ''
   const parts = line.split('·').map(part => part.trim())
   const role = parts[0] ?? ''
@@ -74,7 +85,9 @@ export function parseTaskMeta(body: string): { plan?: number; role: string; pers
 export function linkPull(task: TaskIssue, pulls: PullRequest[]): PullRequest | undefined {
   const explicit = pulls.find(pull => {
     const text = `${pull.title}\n${pull.body}`
-    return new RegExp(`(Closes|closes|Fixes|fixes|关联任务|对应任务|任务)\\s*#${task.number}\\b`).test(text)
+    // PR 描述常写成「设计任务：#7」「关联任务: #7」，关键字与编号之间允许冒号或空格，
+    // 否则只能靠 ±10 分钟的关闭时间兜底，容易把同一计划下别的任务的 PR 认领过来。
+    return new RegExp(`(Closes|closes|Fixes|fixes|关联任务|对应任务|任务)\\s*[：:]?\\s*#${task.number}\\b`).test(text)
   })
   if (explicit || !task.closedAt) return explicit
   const closed = Date.parse(task.closedAt)

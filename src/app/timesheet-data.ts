@@ -1,7 +1,7 @@
 /** 工时数据装配 v3：读计划/任务 issue、结果 PR 与话题起点，产出 B1–B4 行，并可回贴计划 issue。 */
 import { execFileSync } from 'node:child_process'
 import type { Ticket, Trigger } from '../core/index.ts'
-import { buildRows, renderMarkdown, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
+import { buildRows, declaresPlan, renderMarkdown, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
 
 /** 计划完成时回贴的评论标记，用于幂等。 */
 export const TIMESHEET_MARK = '<!-- dsh-timesheet -->'
@@ -69,7 +69,7 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
       pulls.push(asPull(item, number))
     } else if (asArray(item.labels).map(labelName).includes('task')) {
       const body = asString(item.body)
-      if (!new RegExp(`归属计划[：:]\\s*#${planNumber}\\b`).test(body)) continue
+      if (!declaresPlan(body, planNumber)) continue
       tasks.push({ number, title: asString(item.title), body,
         createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
     }
@@ -157,7 +157,7 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
   const starts = threadStartByPlan(plans, source.tickets, source.triggerOf)
   const base = `https://github.com/${source.repository}`
   const rows = plans.flatMap(plan => {
-    const own = tasks.filter(task => new RegExp(`归属计划[：:]\\s*#${plan.number}\\b`).test(task.body))
+    const own = tasks.filter(task => declaresPlan(task.body, plan.number))
     const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
     return buildRows({ plan, tasks: own, pulls, threadStartedAt, base })
   })
