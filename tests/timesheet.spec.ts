@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildRows, hours, linkPull, parseTaskMeta, renderMarkdown,
+import { buildRows, declaresPlan, hours, linkPull, parseTaskMeta, renderMarkdown,
   type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../src/sources/timesheet.ts'
 
 const one = (input: Parameters<typeof buildRows>[0]): TimesheetRow => buildRows(input)[0]!
@@ -42,6 +42,22 @@ describe('parseTaskMeta', () => {
   it('never invents a person', () => {
     expect(parseTaskMeta('无模板正文')).toEqual({ role: '', person: '' })
   })
+  it('accepts 所属计划 as well as 归属计划', () => {
+    expect(parseTaskMeta('所属计划：#6\n\n**角色**：设计岗（产品）· 陈小二'))
+      .toEqual({ plan: 6, role: '设计岗（产品）', person: '陈小二' })
+  })
+})
+
+describe('declaresPlan', () => {
+  it('accepts both plan-link wordings the plan templates have used', () => {
+    expect(declaresPlan('归属计划：#1', 1)).toBe(true)
+    expect(declaresPlan('所属计划：#6', 6)).toBe(true)
+  })
+  it('does not match another plan, a longer number, or a missing line', () => {
+    expect(declaresPlan('所属计划：#6', 1)).toBe(false)
+    expect(declaresPlan('所属计划：#66', 6)).toBe(false)
+    expect(declaresPlan('无模板正文', 6)).toBe(false)
+  })
 })
 
 describe('linkPull', () => {
@@ -51,6 +67,17 @@ describe('linkPull', () => {
   })
   it('returns undefined when nothing names the task and it is still open', () => {
     expect(linkPull(task({ closedAt: null }), [pull({ body: 'no reference' })])).toBeUndefined()
+  })
+  it('reads a task named after a colon, so a sibling PR is not mistaken for it', () => {
+    const design = pull({ number: 9, title: 'design: 交付知识库功能产品说明与 CSV 模板',
+      body: '## 关联\n\n- 计划：#6\n- 设计任务：#7',
+      createdAt: '2026-11-19T10:21:42Z', mergedAt: '2026-11-20T02:03:01Z' })
+    const implement = pull({ number: 10, title: 'feat: 实现数字人 CSV 知识库',
+      body: '## 关联\n\n- 计划：#6\n- 实施任务：#8',
+      createdAt: '2026-11-19T10:38:59Z', mergedAt: '2026-11-20T02:03:32Z' })
+    const seven = task({ number: 7, body: '所属计划：#6', closedAt: '2026-11-20T02:04:02Z' })
+    // 关闭时间兜底会选到 #10（差 32 秒）；显式引用必须优先。
+    expect(linkPull(seven, [design, implement])?.number).toBe(9)
   })
 })
 
