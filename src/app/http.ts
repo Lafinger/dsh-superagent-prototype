@@ -104,9 +104,17 @@ function machineView({ stateDir, promptMaxChars, admissionContextMaxPages, admis
   return { stateDir, promptMaxChars: promptMaxChars.get(), admissionContextMaxPages: admissionContextMaxPages.get(),
     admissionContextTimeoutMs: admissionContextTimeoutMs.get() }
 }
+/**
+ * The project name shown beside the plans and in the timesheet: `PROJECT_NAME` from the deployment,
+ * else the repository it watches, which is the only name deployed code knows on its own.
+ */
+function projectName(runtime: HttpHost): string {
+  return (process.env.PROJECT_NAME ?? '').trim() || (runtime.configured() ? runtime.deployment.repository : '')
+}
 function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
+    project: projectName(runtime),
     machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
@@ -124,14 +132,15 @@ function timesheetSource(runtime: HttpHost) {
 /** `GET /timesheet`: four-timestamp lead time as JSON rows, each with the plan/task/pull links and bodies. Read-only. */
 function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetView {
   if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
+  const project = projectName(runtime)
   const source = timesheetSource(runtime)
   // Without a plan number the route returns every plan's rows.
-  if (plan === undefined || plan === '') return { rows: collectAllTimesheets(source) }
+  if (plan === undefined || plan === '') return { project, rows: collectAllTimesheets(source) }
   const number = planNumber(plan)
   if (number === undefined) throw new RouteError(400, 'plan must be a positive integer')
   const collected = collectTimesheet(source, number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  return { rows: collected.rows }
+  return { project, rows: collected.rows }
 }
 /** `POST /timesheet/post`: comments one plan's table on its plan issue, unless already there. */
 function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPostView {
@@ -140,7 +149,7 @@ function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPo
   if (number === undefined) throw new RouteError(400, 'plan is required')
   const collected = collectTimesheet(timesheetSource(runtime), number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  const markdown = timesheetMarkdown(collected.plan, collected.rows)
+  const markdown = timesheetMarkdown(collected.plan, collected.rows, projectName(runtime))
   return { posted: postTimesheet(timesheetSource(runtime), number, markdown), plan: number, rows: collected.rows.length }
 }
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent status` (`docs/006-deployment.md`). */

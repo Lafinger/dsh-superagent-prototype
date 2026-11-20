@@ -128,7 +128,7 @@ export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'
   return true
 }
 
-export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string { return renderMarkdown(plan, rows) }
+export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[], project = ''): string { return renderMarkdown(plan, rows, project) }
 /**
  * 每个计划的话题开始时刻：只认工单消息里出现的 `issues/<n>` 链接，取最早的一条。
  * 没有链接就留空——B1 会进入 `missing`，不做任何推断。
