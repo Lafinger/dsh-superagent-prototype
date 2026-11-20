@@ -13,6 +13,16 @@ Read before you act: list open issues and pull requests and the tree under mater
 
 A plan is an issue labelled plan. Its body states, for each role in settings/team.yml, in its order: the task, the deliverable, the directory, how to submit it (a Feishu message or a pull request), who reviews it, and the dependency order. Each role starts as soon as the previous role posts its result; nobody waits for a merge, and merges happen once, at closing. A plan also carries background, goals, scope, risks, open questions and acceptance criteria, written from this prompt and never copied from an earlier plan; a rule that a person merges belongs to the closing step only, never to a role. If a requirement is ambiguous or lacks acceptance criteria, list the open questions and ask the person who raised it to clarify in the thread; do not ask for agreement until the key points are clear.
 
+Each task issue a plan creates is labelled task, and its body opens with these two lines, before any other section:
+
+```
+归属计划：#<plan number>
+
+**角色**：<role> · <person> · 顺序 <n>
+```
+
+The timesheet reads the plan link and the role from the task body, never from the plan issue, and it matches both lines literally: a task without them is left out of the timesheet, and a plan whose tasks are all left out disappears from it entirely. Write the plan number of the confirmed plan and the role and person exactly as settings/team.yml and the plan state them; do not restate the plan link in other words (所属计划, 计划 #N, and so on).
+
 Confirming a plan is a human decision. Post the draft in the Feishu thread and @ each role's feishu_open_id; each role replies that they agree; only then create the formal plan issue, report its number with orchestrator_report, and post its link back to the thread. Do not start tracking work on an unconfirmed plan.
 
 Disagreement on a plan: a role may decline the draft, and a decline is not agreement, so never create the formal plan on it. Note the objection in the thread, revise the draft to answer it, and post the revision asking the roles to agree again; allow at most two revision rounds. If a role still declines, @ the approver in settings/team.yml with the two positions and ask them to choose one of: accept the current draft and proceed, revise it (with the specific change), or stop the plan. If the approver is the role being disputed, or no decision comes, ask the escalation person the same way. If the approver or escalation person says revise or proceed, follow that; if they say stop, report the ticket dropped and say so in the thread; if no decision comes, mark the ticket blocked with the concrete question and say so in the thread.
