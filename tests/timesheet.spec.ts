@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { buildRows, declaresPlan, hours, linkPull, parseTaskMeta, renderMarkdown,
   type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../src/sources/timesheet.ts'
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const one = (input: Parameters<typeof buildRows>[0]): TimesheetRow => buildRows(input)[0]!
 
@@ -179,5 +184,33 @@ describe('asPull', () => {
     const { asPull } = await import('../src/app/timesheet-data.ts')
     const pull = asPull({ number: 5, title: 'x', body: '', created_at: '2026-11-17T08:26:05Z', pull_request: { merged_at: null } }, 5)
     expect(pull.mergedAt).toBeNull()
+  })
+})
+
+describe('flattenPages', () => {
+  it('merges every page into one list, so nothing past the first 100 entries is lost', async () => {
+    const { flattenPages } = await import('../src/app/timesheet-data.ts')
+    expect(flattenPages([[{ number: 1 }], [{ number: 2 }, { number: 3 }]])).toHaveLength(3)
+  })
+  it('returns nothing instead of throwing when the response is not a list', async () => {
+    const { flattenPages } = await import('../src/app/timesheet-data.ts')
+    expect(flattenPages({ message: 'Not Found' })).toEqual([])
+  })
+})
+
+describe('isNotFound', () => {
+  it('recognises the gh 404 in a message or on stderr, and nothing else', async () => {
+    const { isNotFound } = await import('../src/app/timesheet-data.ts')
+    expect(isNotFound(new Error('Command failed: gh api repos/o/r/issues/99\ngh: Not Found (HTTP 404)\n'))).toBe(true)
+    expect(isNotFound(Object.assign(new Error('failed'), { stderr: Buffer.from('gh: Not Found (HTTP 404)') }))).toBe(true)
+    expect(isNotFound(new Error('Command failed: gh api …\ngh: Server Error (HTTP 502)\n'))).toBe(false)
+  })
+})
+
+describe('task body contract', () => {
+  it('is stated by the project skill with the two lines the timesheet reads', () => {
+    const text = readFileSync(join(ROOT, 'skills/dsh-superagent-project/SKILL.md'), 'utf8')
+    expect(text).toContain('归属计划：#<plan number>')
+    expect(text).toContain('**角色**：<role> · <person>')
   })
 })

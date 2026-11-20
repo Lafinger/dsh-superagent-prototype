@@ -11,7 +11,25 @@ type Json = Record<string, unknown>
 function run(cli: string, args: string[]): string {
   return execFileSync(cli, args, { encoding: 'utf8', maxBuffer: 32 << 20 })
 }
-function ghJson(cli: string, path: string): unknown { return JSON.parse(run(cli, ['api', path])) }
+function ghJson(cli: string, path: string, extra: string[] = []): unknown {
+  return JSON.parse(run(cli, ['api', ...extra, path]))
+}
+/**
+ * Every page of a list: `--paginate --slurp` hands back one JSON array of pages, flattened here.
+ * Reading a single 100-entry page used to drop plans, tasks and pull requests from larger repositories.
+ */
+export function flattenPages(pages: unknown): unknown[] {
+  return Array.isArray(pages) ? pages.flatMap(page => asArray(page)) : []
+}
+function ghJsonPages(cli: string, path: string): unknown[] {
+  return flattenPages(ghJson(cli, path, ['--paginate', '--slurp']))
+}
+/** A plan number that does not exist makes gh exit non-zero with `gh: Not Found (HTTP 404)`; that is a 404, not a 500. */
+export function isNotFound(error: unknown): boolean {
+  const value = error as { stderr?: string | { toString(): string }; message?: string } | undefined
+  const stderr = typeof value?.stderr === 'string' ? value.stderr : value?.stderr?.toString() ?? ''
+  return /HTTP 404/.test(`${stderr}\n${value?.message ?? ''}`)
+}
 const asObject = (value: unknown): Json => (typeof value === 'object' && value !== null ? value as Json : {})
 const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : [])
 const asString = (value: unknown): string => (typeof value === 'string' ? value : '')
@@ -43,8 +61,15 @@ export interface TimesheetSource {
 
 
 
-function planIssue(cli: string, repository: string, number: number): PlanIssue {
-  const item = asObject(ghJson(cli, `repos/${repository}/issues/${number}`))
+/** The plan issue itself; undefined when the number does not exist, so the route can answer 404. */
+function planIssue(cli: string, repository: string, number: number): PlanIssue | undefined {
+  let item: Json
+  try {
+    item = asObject(ghJson(cli, `repos/${repository}/issues/${number}`))
+  } catch (error) {
+    if (isNotFound(error)) return undefined
+    throw error
+  }
   return {
     number,
     title: asString(item.title),
@@ -57,8 +82,8 @@ function planIssue(cli: string, repository: string, number: number): PlanIssue {
 /** 拉取一个计划的 B1–B4 行；计划号不存在时返回 undefined。 */
 export function collectTimesheet(source: TimesheetSource, planNumber: number): { plan: PlanIssue; rows: TimesheetRow[] } | undefined {
   const plan = planIssue(source.cli, source.repository, planNumber)
-  if (!plan.title) return undefined
-  const issues = asArray(ghJson(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`))
+  if (!plan?.title) return undefined
+  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
   const tasks: TaskIssue[] = []
   const pulls: PullRequest[] = []
   for (const entry of issues) {
@@ -82,7 +107,7 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
 
 /** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
 export function findPlanForEnd(source: Pick<TimesheetSource, 'cli' | 'repository'>, endedAt: string): number | undefined {
-  const issues = asArray(ghJson(source.cli, `repos/${source.repository}/issues?state=closed&labels=plan&per_page=30`))
+  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=closed&labels=plan&per_page=30`)
   const at = Date.parse(endedAt)
   const candidates = issues
     .map(entry => {
@@ -97,7 +122,7 @@ export function findPlanForEnd(source: Pick<TimesheetSource, 'cli' | 'repository
 
 /** 把工时表作为评论贴到计划 issue；已有标记则跳过并返回 false。 */
 export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'>, plan: number, markdown: string): boolean {
-  const comments = asArray(ghJson(source.cli, `repos/${source.repository}/issues/${plan}/comments?per_page=100`))
+  const comments = ghJsonPages(source.cli, `repos/${source.repository}/issues/${plan}/comments?per_page=100`)
   if (comments.some(entry => asString(asObject(entry).body).includes(TIMESHEET_MARK))) return false
   run(source.cli, ['api', '-X', 'POST', `repos/${source.repository}/issues/${plan}/comments`, '-f', `body=${markdown}`])
   return true
@@ -135,7 +160,7 @@ export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], trigger
 
 /** 拉取仓库里所有计划的 B1–B4 行（按计划号、任务号排序）。 */
 export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
-  const issues = asArray(ghJson(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`))
+  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
   const plans: PlanIssue[] = []
   const tasks: TaskIssue[] = []
   const pulls: PullRequest[] = []
