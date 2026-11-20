@@ -152,7 +152,7 @@ const SPAN = (row: TimesheetRow, key: string, value?: number) =>
   value === undefined ? (row.missing.includes(key) ? '缺失' : '—') : `${value.toFixed(1)}h`
 
 /** 计划 issue 的评论正文；仅内部使用，不是接口格式。 */
-export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string {
+export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[], project = ''): string {
   const header = ['计划', '任务', '岗位', '负责人', 'B1 话题开始', 'B2 正式发布', 'B3 首次提交', 'B4 计划完成',
     '规划期 B2−B1', '响应期 B3−B2', '收尾期 B4−B3', '全周期 B4−B1']
   const line = (cells: string[]) => `| ${cells.join(' | ')} |`
@@ -172,7 +172,7 @@ export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[]): string {
   ]))
   return [
     '<!-- dsh-timesheet -->',
-    `## 工时（交付时长）：${plan.title}`,
+    `## 工时（交付时长）：${project ? `${project} · ` : ''}${plan.title}`,
     '',
     line(header),
     line(header.map(() => '---')),

@@ -248,7 +248,7 @@ function initial(): PanelServer {
   const defaults = { revision: 0, previousRevision: null, savedAt: '', source: 'defaults' }
   return {
     health: {}, down: false, pending: 0, opened: [], requests: [], misuse: [], queued: new Set(), dropped: [], failing: [],
-    setup: { machine: MACHINE, problem: null, feishuProblem: null,
+    setup: { project: 'acme/widgets', machine: MACHINE, problem: null, feishuProblem: null,
       accounts: { repository: 'acme/widgets', agent: 'agent-bot', feishu: { appId: 'cli_bot', brand: 'feishu', botId: 'ou_bot',
         name: 'Widgets Bot' } } },
     settings, revisions: { policy: 3, eval: 1, executor: 0 },
@@ -300,7 +300,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'GET sources': { answer: sourceStatuses },
   'GET settings': { answer: settingsView },
-  'GET timesheet': { query: ['plan'], answer: () => ({ rows: [] }) },
+  'GET timesheet': { query: ['plan'], answer: () => ({ project: 'acme/widgets', rows: [] }) },
   'POST timesheet/post': { query: ['plan'], answer: () => ({ posted: false, plan: 1, rows: 0 }) },
   'POST sources/:id/labels': { answer: () => {
     // Label refresh failures come from the bot CLI and are returned verbatim.

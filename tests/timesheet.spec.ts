@@ -146,6 +146,12 @@ describe('renderMarkdown', () => {
     expect(markdown).toContain('#2')
     expect(markdown).toContain('B1 话题开始')
   })
+  it('names the deployment project in the title, and stays unchanged without one', () => {
+    const row = one({ plan: plan(), tasks: [task()], pulls: [pull()], threadStartedAt: threadStart, base })
+    expect(renderMarkdown(plan(), [row], 'Web数字人项目'))
+      .toContain('## 工时（交付时长）：Web数字人项目 · 计划：数字人语音交互演示程序 POC')
+    expect(renderMarkdown(plan(), [row])).toContain('## 工时（交付时长）：计划：数字人语音交互演示程序 POC')
+  })
 })
 
 
