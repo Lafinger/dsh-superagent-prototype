@@ -105,16 +105,21 @@ function machineView({ stateDir, promptMaxChars, admissionContextMaxPages, admis
     admissionContextTimeoutMs: admissionContextTimeoutMs.get() }
 }
 /**
- * The project name shown beside the plans and in the timesheet: `PROJECT_NAME` from the deployment,
- * else the repository it watches, which is the only name deployed code knows on its own.
+ * The project a deployment reports: `PROJECT_ID` and `PROJECT_NAME`, each falling back to the repository it
+ * watches, which is the only identifier deployed code knows on its own. The id stays machine-readable for
+ * matching and joining; the name is what a person reads beside the plans and in the posted table.
  */
-function projectName(runtime: HttpHost): string {
-  return (process.env.PROJECT_NAME ?? '').trim() || (runtime.configured() ? runtime.deployment.repository : '')
+function projectIdentity(runtime: HttpHost): { project_id: string; project_name: string } {
+  const repository = runtime.configured() ? runtime.deployment.repository : ''
+  return {
+    project_id: (process.env.PROJECT_ID ?? '').trim() || repository,
+    project_name: (process.env.PROJECT_NAME ?? '').trim() || repository,
+  }
 }
 function setupView(runtime: HttpHost) {
   const resolved = runtime.configured() ? runtime.deployment : undefined
   return {
-    project: projectName(runtime),
+    ...projectIdentity(runtime),
     machine: machineView(runtime.machine), problem: runtime.setupProblem ?? null, feishuProblem: runtime.feishuProblem ?? null,
     accounts: resolved ? { repository: resolved.repository, agent: resolved.github.login, feishu: resolved.feishu ? { appId: resolved.feishu.appId, brand: resolved.feishu.brand, botId: resolved.feishu.botId, name: resolved.feishu.name } : null } : null,
   }
@@ -132,15 +137,15 @@ function timesheetSource(runtime: HttpHost) {
 /** `GET /timesheet`: four-timestamp lead time as JSON rows, each with the plan/task/pull links and bodies. Read-only. */
 function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetView {
   if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
-  const project = projectName(runtime)
+  const project = projectIdentity(runtime)
   const source = timesheetSource(runtime)
   // Without a plan number the route returns every plan's rows.
-  if (plan === undefined || plan === '') return { project, rows: collectAllTimesheets(source) }
+  if (plan === undefined || plan === '') return { ...project, rows: collectAllTimesheets(source) }
   const number = planNumber(plan)
   if (number === undefined) throw new RouteError(400, 'plan must be a positive integer')
   const collected = collectTimesheet(source, number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  return { project, rows: collected.rows }
+  return { ...project, rows: collected.rows }
 }
 /** `POST /timesheet/post`: comments one plan's table on its plan issue, unless already there. */
 function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPostView {
@@ -149,7 +154,7 @@ function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPo
   if (number === undefined) throw new RouteError(400, 'plan is required')
   const collected = collectTimesheet(timesheetSource(runtime), number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  const markdown = timesheetMarkdown(collected.plan, collected.rows, projectName(runtime))
+  const markdown = timesheetMarkdown(collected.plan, collected.rows, projectIdentity(runtime).project_name)
   return { posted: postTimesheet(timesheetSource(runtime), number, markdown), plan: number, rows: collected.rows.length }
 }
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent status` (`docs/006-deployment.md`). */

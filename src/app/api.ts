@@ -15,8 +15,8 @@ export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as c
 export type TicketFilter = typeof TICKET_FILTERS[number]
 export type ThreadFilter = typeof THREAD_FILTERS[number]
 interface Paged { offset?: number; limit?: number }
-/** Four-timestamp lead time as JSON rows, plus the project name the deployment shows next to them. */
-export interface TimesheetView { project: string; rows: TimesheetRow[] }
+/** Four-timestamp lead time as JSON rows, plus the project identity the deployment reports beside them. */
+export interface TimesheetView { project_id: string; project_name: string; rows: TimesheetRow[] }
 /** Result of commenting a plan's lead-time table on its plan issue. */
 export interface TimesheetPostView { posted: boolean; plan: number; rows: number }
 /** Whether a context update was already injected into the main Session or is still pending delivery. */
