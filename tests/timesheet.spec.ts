@@ -239,6 +239,7 @@ describe('coordinationOf', () => {
     const { coordinationOf } = await import('../src/app/timesheet-data.ts')
     const rows = [{ b1: '2026-11-16T09:51:13Z' } as TimesheetRow]
     const result = coordinationOf({ plan, rows, events: [], approver: { role: '管理岗', person: 'Lafinger' } })
+    expect(result?.plan).toBe(1)
     expect(result?.requirement_start).toBe('2026-11-16T09:51:13Z')
     expect(result?.plan_published).toBe('2026-11-16T10:04:03Z')
     expect(result?.plan_completed).toBe('2026-11-18T09:26:10Z')
@@ -267,3 +268,4 @@ describe('coordinationEvents', () => {
     ])
   })
 })
+

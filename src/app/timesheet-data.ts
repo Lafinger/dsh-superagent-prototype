@@ -277,6 +277,7 @@ export function coordinationOf(input: { plan: PlanIssue; rows: TimesheetRow[]; e
   const confirmWait = hours(requirementStart, planPublished)
   const closeWait = hours(planPublished, planCompleted)
   return {
+    plan: plan.number,
     role: approver.role,
     person: approver.person,
     ...(requirementStart ? { requirement_start: requirementStart } : {}),
@@ -287,6 +288,7 @@ export function coordinationOf(input: { plan: PlanIssue; rows: TimesheetRow[]; e
     events,
   }
 }
+
 
 
 

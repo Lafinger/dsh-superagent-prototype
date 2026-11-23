@@ -194,6 +194,7 @@ export interface CoordinationEvent {
  * 不套用任务行的交付时长；没有决策消息时整个对象为 null。
  */
 export interface Coordination {
+  plan: number
   role: string
   person: string
   requirement_start?: string
@@ -203,3 +204,4 @@ export interface Coordination {
   wait_close_hours?: number
   events: CoordinationEvent[]
 }
+
