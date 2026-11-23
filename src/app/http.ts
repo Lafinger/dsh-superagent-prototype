@@ -28,7 +28,7 @@ import { settingsView } from './views/settings.ts'
 import { sourcesStatus, type SetupState } from './views/sources.ts'
 import { decisionList, search, threadDetail, threadList } from './views/threads.ts'
 import { executorLoad, ticketDetail, ticketList } from './views/tickets.ts'
-import { collectAllTimesheets, collectTimesheet, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
+import { collectAllPlans, collectPlan, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
 
 export interface HttpHost {
   readonly store: Store
@@ -137,28 +137,32 @@ function timesheetSource(runtime: HttpHost) {
 /** `GET /timesheet`: four-timestamp lead time as JSON rows, each with the plan/task/pull links and bodies. Read-only. */
 function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetView {
   if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
-  const project = projectIdentity(runtime)
+  const { project_id, project_name } = projectIdentity(runtime)
   const source = timesheetSource(runtime)
-  // Without a plan number the route returns every plan's rows.
+  let plans: ReturnType<typeof collectAllPlans>
+  // Without a plan number the route returns every plan.
   if (plan === undefined || plan === '') {
-    const all = collectAllTimesheets(source)
-    return { ...project, rows: all.rows, coordinations: all.coordinations }
+    plans = collectAllPlans(source)
+  } else {
+    const number = planNumber(plan)
+    if (number === undefined) throw new RouteError(400, 'plan must be a positive integer')
+    const collected = collectPlan(source, number)
+    if (!collected) throw new RouteError(404, `Plan #${number} not found`)
+    plans = [collected]
   }
-  const number = planNumber(plan)
-  if (number === undefined) throw new RouteError(400, 'plan must be a positive integer')
-  const collected = collectTimesheet(source, number)
-  if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  return { ...project, rows: collected.rows, coordination: collected.coordination }
+  return { schema_version: 2, project: { id: project_id, name: project_name }, plans }
 }
 /** `POST /timesheet/post`: comments one plan's table on its plan issue, unless already there. */
 function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPostView {
   if (!runtime.configured()) throw new RouteError(400, 'Setup is incomplete')
   const number = planNumber(plan)
   if (number === undefined) throw new RouteError(400, 'plan is required')
-  const collected = collectTimesheet(timesheetSource(runtime), number)
+  const source = timesheetSource(runtime)
+  const collected = collectPlan(source, number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  const markdown = timesheetMarkdown(collected.plan, collected.rows, projectIdentity(runtime).project_name)
-  return { posted: postTimesheet(timesheetSource(runtime), number, markdown), plan: number, rows: collected.rows.length }
+  const markdown = timesheetMarkdown(collected, projectIdentity(runtime).project_name)
+  const tasks = collected.roles.reduce((sum, role) => sum + role.tasks.length, 0)
+  return { posted: postTimesheet(source, number, markdown), plan: number, rows: tasks }
 }
 /** Build the `/orchestrator/api/state` response consumed by the management panel and `scripts/dsh-superagent status` (`docs/006-deployment.md`). */
 export function stateView(runtime: HttpHost) {

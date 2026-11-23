@@ -35,7 +35,7 @@ import { candidateCard, repliedTo, sourceLink, type LinkHost } from './links.ts'
 import { eventNotice, followupNotice } from './notices.ts'
 import { pullEndNotices } from '../sources/github-pull.ts'
 import { stopEndNotices } from '../sources/stop-notices.ts'
-import { collectTimesheet, findPlanForEnd, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
+import { collectPlan, findPlanForEnd, postTimesheet, timesheetMarkdown } from './timesheet-data.ts'
 import { HealthBoard } from '../infra/health.ts'
 import { Outbox } from './outbox.ts'
 import { Passes } from './passes.ts'
@@ -272,10 +272,11 @@ function publishTimesheet(store: Store, deployment: Deployment, ticket: Ticket):
         planLinkOf: (plan: number) => store.get(KV.planLink(plan)) }
       const plan = findPlanForEnd(source, endedAt)
       if (plan === undefined) return
-      const collected = collectTimesheet(source, plan)
-      if (collected?.rows.length) postTimesheet(source, plan, timesheetMarkdown(collected.plan, collected.rows))
+      const collected = collectPlan(source, plan)
+      if (collected && collected.roles.some(role => role.tasks.length)) postTimesheet(source, plan, timesheetMarkdown(collected))
     } catch (error) {
       void error
     }
   })
 }
+

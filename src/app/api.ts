@@ -8,7 +8,7 @@ import type { SettingsView } from './views/settings.ts'
 import type { SourceStatusView } from './views/sources.ts'
 import type { DecisionListView, SearchView, ThreadDetailView, ThreadListView } from './views/threads.ts'
 import type { TicketListView } from './views/tickets.ts'
-import type { Coordination, TimesheetRow } from '../sources/timesheet.ts'
+import type { PlanTimesheet } from '../sources/timesheet.ts'
 
 export const TICKET_FILTERS = ['open', 'person', 'working', 'idle', 'ended'] as const
 export const THREAD_FILTERS = ['subscribed', 'evaluating', 'recent', 'all'] as const
@@ -17,13 +17,10 @@ export type ThreadFilter = typeof THREAD_FILTERS[number]
 interface Paged { offset?: number; limit?: number }
 /** Four-timestamp lead time as JSON rows, plus the project identity the deployment reports beside them. */
 export interface TimesheetView {
-  project_id: string
-  project_name: string
-  rows: TimesheetRow[]
-  /** The approver's coordination record for one plan; null when team.yml names no approver. */
-  coordination?: Coordination | null
-  /** One coordination record per plan when the request names no plan. */
-  coordinations?: Coordination[]
+  schema_version: 2
+  project: { id: string; name: string }
+  /** One element per plan; a request that names a plan has exactly one. */
+  plans: PlanTimesheet[]
 }
 /** Result of commenting a plan's lead-time table on its plan issue. */
 export interface TimesheetPostView { posted: boolean; plan: number; rows: number }
@@ -65,6 +62,7 @@ type Params<P> = P extends `${string}:${infer Name}/${infer Rest}` ? Record<Name
 export type RouteParams<K extends keyof Api> = Params<Path<K>>
 export type ApiRequest<K extends keyof Api> = RouteParams<K> & Omit<Api[K], 'response'>
 export type ApiResponse<K extends keyof Api> = Api[K]['response']
+
 
 
 

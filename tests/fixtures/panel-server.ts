@@ -300,7 +300,7 @@ const ROUTES: { [K in keyof Api]: Route<K> } = {
   } },
   'GET sources': { answer: sourceStatuses },
   'GET settings': { answer: settingsView },
-  'GET timesheet': { query: ['plan'], answer: () => ({ project_id: 'acme/widgets', project_name: 'acme/widgets', rows: [] }) },
+  'GET timesheet': { query: ['plan'], answer: () => ({ schema_version: 2 as const, project: { id: 'acme/widgets', name: 'acme/widgets' }, plans: [] }) },
   'POST timesheet/post': { query: ['plan'], answer: () => ({ posted: false, plan: 1, rows: 0 }) },
   'POST sources/:id/labels': { answer: () => {
     // Label refresh failures come from the bot CLI and are returned verbatim.
@@ -480,5 +480,6 @@ export function fakeForm(writable = true, accept = true) {
   const publish = (patch: Partial<ConfigFormSnapshot<Record<string, unknown>>>) => { snapshot = { ...snapshot, ...patch }; notify() }
   return { form, mutations, publish }
 }
+
 
 

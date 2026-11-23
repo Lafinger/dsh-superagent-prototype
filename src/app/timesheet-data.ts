@@ -1,7 +1,7 @@
-/** 工时数据装配 v3：读计划/任务 issue、结果 PR 与话题起点，产出 B1–B4 行，并可回贴计划 issue。 */
+/** 工时数据装配 v2：读计划/任务 issue、结果 PR 与团队文件，产出 计划 → 角色 → 任务 的分层结构。 */
 import { execFileSync } from 'node:child_process'
 import type { Ticket, Trigger } from '../core/index.ts'
-import { buildRows, declaresPlan, hours, renderMarkdown, type Coordination, type CoordinationEvent, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
+import { buildTasks, declaresPlan, hours, parseTaskMeta, renderMarkdown, type Coordination, type PlanIssue, type PlanTimesheet, type PullRequest, type RoleTimesheet, type TaskIssue } from '../sources/timesheet.ts'
 
 /** 计划完成时回贴的评论标记，用于幂等。 */
 export const TIMESHEET_MARK = '<!-- dsh-timesheet -->'
@@ -59,8 +59,6 @@ export interface TimesheetSource {
   planLinkOf: (plan: number) => { at: string } | undefined
 }
 
-
-
 /** The plan issue itself; undefined when the number does not exist, so the route can answer 404. */
 function planIssue(cli: string, repository: string, number: number): PlanIssue | undefined {
   let item: Json
@@ -79,63 +77,64 @@ function planIssue(cli: string, repository: string, number: number): PlanIssue |
   }
 }
 
-/** 拉取一个计划的 B1–B4 行；计划号不存在时返回 undefined。 */
-export function collectTimesheet(source: TimesheetSource, planNumber: number): { plan: PlanIssue; rows: TimesheetRow[]; coordination: Coordination | null } | undefined {
-  const plan = planIssue(source.cli, source.repository, planNumber)
-  if (!plan?.title) return undefined
-  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
-  const tasks: TaskIssue[] = []
-  const pulls: PullRequest[] = []
-  for (const entry of issues) {
-    const item = asObject(entry)
-    const number = Number(item.number)
-    if (item.pull_request) {
-      // The issues list already carries the PR body and `pull_request.merged_at`, so no per-PR request is needed.
-      pulls.push(asPull(item, number))
-    } else if (asArray(item.labels).map(labelName).includes('task')) {
-      const body = asString(item.body)
-      if (!declaresPlan(body, planNumber)) continue
-      tasks.push({ number, title: asString(item.title), body,
-        createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
+/** 管理岗（审批人）：来自 team.yml 的 approver 块。 */
+export interface Approver { role: string; person: string }
+
+/** team.yml 里的团队：审批人 + 岗位（key/name/order）。 */
+export interface Team { approver?: Approver; roles: { key: string; name: string; order?: number }[] }
+
+/** 从 team.yml 文本解析 approver 与 roles；解析不到的部分留空。 */
+export function parseTeam(text: string): Team {
+  const lines = text.split(/\r?\n/)
+  const blockOf = (key: string): string[] => {
+    const start = lines.findIndex(line => new RegExp(`^${key}:\\s*$`).test(line))
+    if (start < 0) return []
+    const block: string[] = []
+    for (let index = start + 1; index < lines.length; index++) {
+      const line = lines[index] ?? ''
+      if (line.trim() && !/^\s/.test(line)) break
+      if (line.trim() && !/^\s*#/.test(line)) block.push(line)
     }
+    return block
   }
-  const base = `https://github.com/${source.repository}`
-  const starts = threadStartByPlan([plan], source.tickets, source.triggerOf)
-  const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
-  const rows = buildRows({ plan, tasks, pulls, threadStartedAt, base })
-  const approver = readApprover(source.cli, source.repository)
-  const events = approver ? coordinationEvents(source.tickets, source.triggerOf, approver, plan.number) : []
-  return { plan, rows, coordination: coordinationOf({ plan, rows, events, approver }) }
+  const pick = (block: string[], key: string) => block
+    .map(line => line.match(new RegExp(`^\\s*${key}:\\s*(.+)$`))?.[1]?.trim())
+    .find(value => !!value)
+  const approverBlock = blockOf('approver')
+  const approverName = pick(approverBlock, 'name')
+  const approverPerson = pick(approverBlock, 'feishu_name') ?? approverName
+  const approver = approverName
+    ? { role: approverName, person: approverPerson ?? '' }
+    : undefined
+  const roles: Team['roles'] = []
+  for (const line of lines) {
+    const key = line.match(/^\s*-\s*key:\s*(\S+)/)?.[1]
+    if (key) roles.push({ key, name: '', })
+  }
+  // 名字与顺序在 key 之后的行里，按顺序补齐。
+  let cursor = 0
+  for (let index = 0; index < lines.length; index++) {
+    const key = lines[index]?.match(/^\s*-\s*key:\s*(\S+)/)?.[1]
+    if (!key) continue
+    const name = lines.slice(index, index + 8).map(line => line.match(/^\s*name:\s*(.+)$/)?.[1]?.trim()).find(Boolean)
+    const order = lines.slice(index, index + 8).map(line => line.match(/^\s*order:\s*(\d+)/)?.[1]).find(Boolean)
+    if (roles[cursor]) roles[cursor] = { key, name: name ?? key, ...(order ? { order: Number(order) } : {}) }
+    cursor++
+  }
+  return { ...(approver ? { approver } : {}), roles }
 }
 
-/** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
-export function findPlanForEnd(source: Pick<TimesheetSource, 'cli' | 'repository'>, endedAt: string): number | undefined {
-  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=closed&labels=plan&per_page=30`)
-  const at = Date.parse(endedAt)
-  const candidates = issues
-    .map(entry => {
-      const item = asObject(entry)
-      const closed = Date.parse(asString(item.closed_at))
-      return { number: Number(item.number), distance: Number.isFinite(closed) ? Math.abs(closed - at) : Number.POSITIVE_INFINITY }
-    })
-    .filter(item => item.number > 0 && item.distance <= 10 * 60_000)
-    .sort((a, b) => a.distance - b.distance)
-  return candidates[0]?.number
+/** 读仓库里的 settings/team.yml；读不到时返回 undefined。 */
+export function readTeam(cli: string, repository: string): Team | undefined {
+  try {
+    const body = asObject(ghJson(cli, `repos/${repository}/contents/settings/team.yml`))
+    return parseTeam(Buffer.from(asString(body.content), 'base64').toString('utf8'))
+  } catch {
+    return undefined
+  }
 }
 
-/** 把工时表作为评论贴到计划 issue；已有标记则跳过并返回 false。 */
-export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'>, plan: number, markdown: string): boolean {
-  const comments = ghJsonPages(source.cli, `repos/${source.repository}/issues/${plan}/comments?per_page=100`)
-  if (comments.some(entry => asString(asObject(entry).body).includes(TIMESHEET_MARK))) return false
-  run(source.cli, ['api', '-X', 'POST', `repos/${source.repository}/issues/${plan}/comments`, '-f', `body=${markdown}`])
-  return true
-}
-
-export function timesheetMarkdown(plan: PlanIssue, rows: TimesheetRow[], project = ''): string { return renderMarkdown(plan, rows, project) }
-/**
- * 每个计划的话题开始时刻：只认工单消息里出现的 `issues/<n>` 链接，取最早的一条。
- * 没有链接就留空——B1 会进入 `missing`，不做任何推断。
- */
+/** 每个计划的话题开始时刻：只认工单消息里出现的 `issues/<n>` 链接。 */
 export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined): Map<number, string> {
   const starts = new Map<number, string>()
   const origins = tickets
@@ -161,8 +160,82 @@ export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], trigger
   return starts
 }
 
-/** 拉取仓库里所有计划的 B1–B4 行（按计划号、任务号排序）。 */
-export function collectAllTimesheets(source: TimesheetSource): { rows: TimesheetRow[]; coordinations: Coordination[] } {
+/** 管理岗的三时刻与两段等待；没有审批人时返回 undefined。 */
+function coordinationFor(plan: PlanIssue, requirementStart: string | undefined, team: Team | undefined): Coordination | undefined {
+  if (!team?.approver) return undefined
+  const timestamps: Coordination['timestamps'] = {}
+  if (requirementStart) timestamps.requirement_start = requirementStart
+  if (plan.createdAt) timestamps.plan_published = plan.createdAt
+  if (plan.closedAt) timestamps.plan_completed = plan.closedAt
+  const durations: Coordination['durations'] = {}
+  const confirm = hours(requirementStart, plan.createdAt)
+  const close = hours(plan.createdAt, plan.closedAt)
+  if (confirm !== undefined) durations.confirm = confirm
+  if (close !== undefined) durations.close = close
+  return { timestamps, durations }
+}
+
+/** 把任务按岗位分组，并在有审批人时追加 approver 角色。 */
+function rolesOf(tasks: TaskIssue[], built: ReturnType<typeof buildTasks>, team: Team | undefined,
+  plan: PlanIssue, requirementStart: string | undefined): RoleTimesheet[] {
+  const metas = new Map(tasks.map(task => [task.number, parseTaskMeta(task.body)]))
+  const groups = new Map<string, RoleTimesheet>()
+  for (const task of built) {
+    const meta = metas.get(task.number)
+    const key = team?.roles.find(role => (meta?.order !== undefined && role.order === meta.order) || role.name === meta?.role)?.key
+      ?? `role-${meta?.order ?? task.number}`
+    const existing = groups.get(key)
+    if (existing) existing.tasks.push(task)
+    else groups.set(key, { key, name: meta?.role || '—', person: meta?.person || '—', tasks: [task] })
+  }
+  const roles = [...groups.values()]
+  const coordination = coordinationFor(plan, requirementStart, team)
+  if (team?.approver && coordination) {
+    roles.push({ key: 'approver', name: team.approver.role, person: team.approver.person, tasks: [], coordination })
+  }
+  return roles
+}
+
+function planTimesheet(plan: PlanIssue, tasks: TaskIssue[], pulls: PullRequest[], threadStartedAt: string | undefined,
+  base: string, team: Team | undefined): PlanTimesheet {
+  const built = buildTasks({ plan, tasks, pulls, threadStartedAt, base })
+  return {
+    number: plan.number,
+    url: `${base}/issues/${plan.number}`,
+    title: plan.title,
+    content: plan.body,
+    roles: rolesOf(tasks, built, team, plan, threadStartedAt),
+  }
+}
+
+/** 拉取一个计划的分层工时；计划号不存在时返回 undefined。 */
+export function collectPlan(source: TimesheetSource, planNumber: number): PlanTimesheet | undefined {
+  const plan = planIssue(source.cli, source.repository, planNumber)
+  if (!plan?.title) return undefined
+  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
+  const tasks: TaskIssue[] = []
+  const pulls: PullRequest[] = []
+  for (const entry of issues) {
+    const item = asObject(entry)
+    const number = Number(item.number)
+    if (item.pull_request) {
+      pulls.push(asPull(item, number))
+      continue
+    }
+    if (!asArray(item.labels).map(labelName).includes('task')) continue
+    const body = asString(item.body)
+    if (!declaresPlan(body, planNumber)) continue
+    tasks.push({ number, title: asString(item.title), body,
+      createdAt: asString(item.created_at), closedAt: asString(item.closed_at) || null })
+  }
+  const base = `https://github.com/${source.repository}`
+  const starts = threadStartByPlan([plan], source.tickets, source.triggerOf)
+  const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
+  return planTimesheet(plan, tasks, pulls, threadStartedAt, base, readTeam(source.cli, source.repository))
+}
+
+/** 拉取仓库里所有计划的分层工时。 */
+export function collectAllPlans(source: TimesheetSource): PlanTimesheet[] {
   const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
   const plans: PlanIssue[] = []
   const tasks: TaskIssue[] = []
@@ -172,7 +245,6 @@ export function collectAllTimesheets(source: TimesheetSource): { rows: Timesheet
     const number = Number(item.number)
     const labels = asArray(item.labels).map(labelName)
     if (item.pull_request) {
-      // The issues list already carries the PR body and `pull_request.merged_at`, so no per-PR request is needed.
       pulls.push(asPull(item, number))
     } else if (labels.includes('plan')) {
       plans.push({ number, title: asString(item.title), body: asString(item.body),
@@ -184,112 +256,37 @@ export function collectAllTimesheets(source: TimesheetSource): { rows: Timesheet
   }
   const starts = threadStartByPlan(plans, source.tickets, source.triggerOf)
   const base = `https://github.com/${source.repository}`
-  const perPlan = plans.map(plan => {
-    const own = tasks.filter(task => declaresPlan(task.body, plan.number))
-    const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
-    return { plan, rows: buildRows({ plan, tasks: own, pulls, threadStartedAt, base }) }
-  })
-  const rows = perPlan.flatMap(item => item.rows).sort((a, b) => a.plan - b.plan || a.task - b.task)
-  const approver = readApprover(source.cli, source.repository)
-  const coordinations = approver
-    ? perPlan
-        .map(item => coordinationOf({ plan: item.plan, rows: item.rows, approver,
-          events: coordinationEvents(source.tickets, source.triggerOf, approver, item.plan.number) }))
-        .filter((item): item is Coordination => item !== null)
-    : []
-  return { rows, coordinations }
-}
-/** 管理岗（审批人）：来自 team.yml 的 approver 块。 */
-export interface Approver { role: string; person: string; openId?: string }
-
-/** 读仓库里 settings/team.yml 的 approver 块；读不到时返回 undefined（coordination 随之为 null）。 */
-export function readApprover(cli: string, repository: string): Approver | undefined {
-  let text: string
-  try {
-    const body = asObject(ghJson(cli, `repos/${repository}/contents/settings/team.yml`))
-    text = Buffer.from(asString(body.content), 'base64').toString('utf8')
-  } catch {
-    return undefined
-  }
-  return parseApprover(text)
+  const team = readTeam(source.cli, source.repository)
+  return plans
+    .map(plan => planTimesheet(plan, tasks.filter(task => declaresPlan(task.body, plan.number)), pulls,
+      source.planLinkOf(plan.number)?.at ?? starts.get(plan.number), base, team))
+    .sort((a, b) => a.number - b.number)
 }
 
-/** 从 team.yml 文本解析 approver 块：岗位名、姓名、open_id。 */
-export function parseApprover(text: string): Approver | undefined {
-  const lines = text.split(/\r?\n/)
-  const start = lines.findIndex(line => /^approver:\s*$/.test(line))
-  if (start < 0) return undefined
-  const block: string[] = []
-  for (let index = start + 1; index < lines.length; index++) {
-    const line = lines[index] ?? ''
-    if (line.trim() && !/^\s/.test(line)) break
-    if (line.trim() && !/^\s*#/.test(line)) block.push(line)
-  }
-  const pick = (key: string) => block
-    .map(line => line.match(new RegExp(`^\\s*${key}:\\s*(.+)$`))?.[1]?.trim())
-    .find(value => !!value)
-  const role = pick('name') ?? '管理岗'
-  const person = pick('feishu_name') ?? pick('name') ?? ''
-  const openId = pick('feishu_open_id')
-  return { role, person, ...(openId ? { openId } : {}) }
+/** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
+export function findPlanForEnd(source: Pick<TimesheetSource, 'cli' | 'repository'>, endedAt: string): number | undefined {
+  const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=closed&labels=plan&per_page=30`)
+  const at = Date.parse(endedAt)
+  const candidates = issues
+    .map(entry => {
+      const item = asObject(entry)
+      const closed = Date.parse(asString(item.closed_at))
+      return { number: Number(item.number), distance: Number.isFinite(closed) ? Math.abs(closed - at) : Number.POSITIVE_INFINITY }
+    })
+    .filter(item => item.number > 0 && item.distance <= 10 * 60_000)
+    .sort((a, b) => a.distance - b.distance)
+  return candidates[0]?.number
 }
 
-const EVENT_RULES: readonly [CoordinationEvent['kind'], RegExp][] = [
-  ['stop', /(终止|停止)/],
-  ['rework', /(不接受|不同意|返工|驳回|需要修改|有异议)/],
-  ['confirm', /(计划|草案)[\s\S]*(同意|确认|通过)|(同意|确认|通过)[\s\S]*(计划|草案)/],
-  ['approve', /(验收|成果|交付)[\s\S]*(通过|接受|同意)|(通过|接受|同意)[\s\S]*(验收|成果|交付)/],
-]
-
-/** 管理岗发出的决策消息，按时间排序；按 open_id 认人，没有 open_id 时退回姓名。 */
-export function coordinationEvents(tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined,
-  approver: Approver, plan: number): CoordinationEvent[] {
-  const events: CoordinationEvent[] = []
-  for (const ticket of tickets) {
-    for (const input of ticket.inputs ?? []) {
-      const triggerId = (input as { triggerId?: string }).triggerId
-      const trigger = typeof triggerId === 'string' ? triggerOf(triggerId) : undefined
-      if (!trigger?.at) continue
-      const actor = asObject(trigger.actor)
-      const actorId = asString(actor.id)
-      const name = asObject(actor.name)
-      const mine = approver.openId ? actorId === approver.openId
-        : (asString(name.zh) || asString(name.en)) === approver.person
-      if (!mine) continue
-      const text = asString(trigger.text)
-      const shortAgree = text.trim().length <= 12 && /(同意|确认|通过|没问题)/.test(text)
-      const kind = EVENT_RULES.find(([, pattern]) => pattern.test(text))?.[0] ?? (shortAgree ? 'confirm' as const : undefined)
-      if (!kind) continue
-      events.push({ at: trigger.at, kind, plan })
-    }
-  }
-  return events.sort((a, b) => a.at.localeCompare(b.at)).slice(0, 50)
+/** 把工时表作为评论贴到计划 issue；已有标记则跳过并返回 false。 */
+export function postTimesheet(source: Pick<TimesheetSource, 'cli' | 'repository'>, plan: number, markdown: string): boolean {
+  const comments = asArray(ghJson(source.cli, `repos/${source.repository}/issues/${plan}/comments?per_page=100`))
+  if (comments.some(entry => asString(asObject(entry).body).includes(TIMESHEET_MARK))) return false
+  run(source.cli, ['api', '-X', 'POST', `repos/${source.repository}/issues/${plan}/comments`, '-f', `body=${markdown}`])
+  return true
 }
 
-/** 组装管理岗的 coordination：复用 B1/B2/B4，派生两段等待；没有审批人时返回 null。 */
-export function coordinationOf(input: { plan: PlanIssue; rows: TimesheetRow[]; events: CoordinationEvent[];
-  approver?: Approver }): Coordination | null {
-  const { plan, rows, events, approver } = input
-  if (!approver) return null
-  const requirementStart = rows[0]?.b1
-  const planPublished = plan.createdAt || undefined
-  const planCompleted = plan.closedAt ?? undefined
-  const confirmWait = hours(requirementStart, planPublished)
-  const closeWait = hours(planPublished, planCompleted)
-  return {
-    plan: plan.number,
-    role: approver.role,
-    person: approver.person,
-    ...(requirementStart ? { requirement_start: requirementStart } : {}),
-    ...(planPublished ? { plan_published: planPublished } : {}),
-    ...(planCompleted ? { plan_completed: planCompleted } : {}),
-    ...(confirmWait !== undefined ? { wait_confirm_hours: confirmWait } : {}),
-    ...(closeWait !== undefined ? { wait_close_hours: closeWait } : {}),
-    events,
-  }
+export function timesheetMarkdown(plan: PlanTimesheet, project = ''): string {
+  return renderMarkdown({ number: plan.number, title: plan.title, body: plan.content, createdAt: '', closedAt: null }, plan.roles, project)
 }
-
-
-
-
 

@@ -1,4 +1,4 @@
-/** 工时（交付时长）v3.1：四个时刻 + 三段差值；行内带计划/任务/PR 的链接与正文全文。 */
+/** 工时（交付时长）v2：按 计划 → 角色 → 任务 分层；计划/任务/PR 正文各出现一次。 */
 
 export interface TaskIssue {
   number: number
@@ -24,31 +24,63 @@ export interface PullRequest {
   mergedAt?: string | null
 }
 
-export interface TimesheetRow {
-  plan: number
-  plan_url: string
-  plan_title: string
-  plan_content: string
-  task: number
-  task_url: string
-  task_title: string
-  task_content: string
-  /** PR 字段整组缺失表示该任务没有结果 PR。 */
-  pull?: number
-  pull_url?: string
-  pull_title?: string
-  pull_content?: string
-  role: string
-  person: string
-  b1?: string
-  b2?: string
-  b3?: string
-  b4?: string
+/** 四个语义时刻；缺失的时刻不出现，代号记入 `missing`。 */
+export interface TaskTimestamps {
+  requirement_start?: string
+  plan_published?: string
+  submitted?: string
+  plan_completed?: string
+}
+
+/** 相邻时刻相减，单位小时；无法计算时不出现。 */
+export interface TaskDurations {
   planning?: number
   response?: number
   closing?: number
   total?: number
+}
+
+export interface TaskPull {
+  number: number
+  url: string
+  title: string
+  content: string
+}
+
+export interface TaskTimesheet {
+  number: number
+  url: string
+  title: string
+  content: string
+  /** 没有结果 PR 时整个字段缺失。 */
+  pull?: TaskPull
+  timestamps: TaskTimestamps
+  durations: TaskDurations
   missing: string[]
+}
+
+/** 管理岗只统计三个时刻与两段等待，不返回审阅事件。 */
+export interface Coordination {
+  timestamps: Pick<TaskTimestamps, 'requirement_start' | 'plan_published' | 'plan_completed'>
+  durations: { confirm?: number; close?: number }
+}
+
+export interface RoleTimesheet {
+  key: string
+  name: string
+  person: string
+  /** 管理岗为空数组。 */
+  tasks: TaskTimesheet[]
+  /** 仅管理岗有。 */
+  coordination?: Coordination
+}
+
+export interface PlanTimesheet {
+  number: number
+  url: string
+  title: string
+  content: string
+  roles: RoleTimesheet[]
 }
 
 const HOUR = 3_600_000
@@ -60,34 +92,30 @@ export function hours(from?: string | null, to?: string | null): number | undefi
   return Number.isFinite(delta) && delta >= 0 ? delta / HOUR : undefined
 }
 
-/**
- * 任务正文声明归属计划的行。计划模板各版本分别写过「归属计划」与「所属计划」，
- * 两种都接受，否则该任务的工时行会静默消失（buildRows 只按任务出行）。
- */
 const PLAN_LINK = /(?:归属|所属)计划[：:]\s*#(\d+)/
 
 /** 任务正文是否声明属于该计划。 */
 export function declaresPlan(body: string, plan: number): boolean {
-  return new RegExp(`(?:归属|所属)计划[：:]\\s*#${plan}\\b`).test(body)
+  const declared = body.match(PLAN_LINK)?.[1]
+  return declared !== undefined && Number(declared) === plan
 }
 
-/** 从任务 issue 正文解析所属计划、角色、负责人。 */
-export function parseTaskMeta(body: string): { plan?: number; role: string; person: string } {
+/** 从任务正文解析归属计划、角色、负责人与顺序。 */
+export function parseTaskMeta(body: string): { plan?: number; role: string; person: string; order?: number } {
   const plan = body.match(PLAN_LINK)?.[1]
   const line = body.match(/\*\*角色\*\*[：:]\s*([^\n]+)/)?.[1] ?? ''
   const parts = line.split('·').map(part => part.trim())
+  const order = parts.find(part => /^顺序\s*\d+$/.test(part))?.match(/\d+/)?.[0]
   const role = parts[0] ?? ''
   const person = parts.find(part => part && part !== role && !/^顺序/.test(part)) ?? ''
-  return { ...(plan ? { plan: Number(plan) } : {}), role, person }
+  return { ...(plan ? { plan: Number(plan) } : {}), role, person, ...(order ? { order: Number(order) } : {}) }
 }
 
 /** 结果 PR 与任务的关联：显式引用优先，其次按任务关闭时间就近匹配。 */
 export function linkPull(task: TaskIssue, pulls: PullRequest[]): PullRequest | undefined {
   const explicit = pulls.find(pull => {
     const text = `${pull.title}\n${pull.body}`
-    // PR 描述常写成「设计任务：#7」「关联任务: #7」，关键字与编号之间允许冒号或空格，
-    // 否则只能靠 ±10 分钟的关闭时间兜底，容易把同一计划下别的任务的 PR 认领过来。
-    return new RegExp(`(Closes|closes|Fixes|fixes|关联任务|对应任务|任务)\\s*[：:]?\\s*#${task.number}\\b`).test(text)
+    return new RegExp(`(Closes|closes|Fixes|fixes|关联任务|对应任务|任务)\\s*#${task.number}\\b`).test(text)
   })
   if (explicit || !task.closedAt) return explicit
   const closed = Date.parse(task.closedAt)
@@ -96,112 +124,86 @@ export function linkPull(task: TaskIssue, pulls: PullRequest[]): PullRequest | u
     .sort((a, b) => Math.abs(Date.parse(a.mergedAt!) - closed) - Math.abs(Date.parse(b.mergedAt!) - closed))[0]
 }
 
-/** 逐任务计算 B1–B4 与三段差值；缺失时刻留空并记入 missing。 */
-export function buildRows(input: {
+/** 为一个计划里的每个任务算出时刻、时长与缺失项。 */
+export function buildTasks(input: {
   plan: PlanIssue
   tasks: TaskIssue[]
   pulls: PullRequest[]
-  /** 话题开始时刻：该计划对应工单的原始需求消息时间。 */
   threadStartedAt?: string
-  /** 仓库网页根地址，例如 https://github.com/owner/name */
   base: string
-}): TimesheetRow[] {
+}): TaskTimesheet[] {
   const { plan, pulls, threadStartedAt, base } = input
   return input.tasks
     .map(task => {
-      const meta = parseTaskMeta(task.body)
       const pull = linkPull(task, pulls)
+      const timestamps: TaskTimestamps = {}
       const missing: string[] = []
-      if (!threadStartedAt) missing.push('b1')
-      if (!plan.createdAt) missing.push('b2')
-      if (!pull) missing.push('b3')
-      if (!plan.closedAt) missing.push('b4')
-      const row: TimesheetRow = {
-        plan: meta.plan ?? plan.number,
-        plan_url: `${base}/issues/${plan.number}`,
-        plan_title: plan.title,
-        plan_content: plan.body,
-        task: task.number,
-        task_url: `${base}/issues/${task.number}`,
-        task_title: task.title,
-        task_content: task.body,
-        ...(pull
-          ? { pull: pull.number, pull_url: `${base}/pull/${pull.number}`, pull_title: pull.title, pull_content: pull.body }
-          : {}),
-        role: meta.role || '—',
-        person: meta.person || '—',
-        ...(threadStartedAt ? { b1: threadStartedAt } : {}),
-        ...(plan.createdAt ? { b2: plan.createdAt } : {}),
-        ...(pull ? { b3: pull.createdAt } : {}),
-        ...(plan.closedAt ? { b4: plan.closedAt } : {}),
+      if (threadStartedAt) timestamps.requirement_start = threadStartedAt
+      else missing.push('requirement_start')
+      if (plan.createdAt) timestamps.plan_published = plan.createdAt
+      else missing.push('plan_published')
+      if (pull) timestamps.submitted = pull.createdAt
+      else missing.push('submitted')
+      if (plan.closedAt) timestamps.plan_completed = plan.closedAt
+      else missing.push('plan_completed')
+      const durations: TaskDurations = {}
+      const planning = hours(timestamps.requirement_start, timestamps.plan_published)
+      const response = hours(timestamps.plan_published, timestamps.submitted)
+      const closing = hours(timestamps.submitted, timestamps.plan_completed)
+      const total = hours(timestamps.requirement_start, timestamps.plan_completed)
+      if (planning !== undefined) durations.planning = planning
+      if (response !== undefined) durations.response = response
+      if (closing !== undefined) durations.closing = closing
+      if (total !== undefined) durations.total = total
+      return {
+        number: task.number,
+        url: `${base}/issues/${task.number}`,
+        title: task.title,
+        content: task.body,
+        ...(pull ? { pull: { number: pull.number, url: `${base}/pull/${pull.number}`, title: pull.title, content: pull.body } } : {}),
+        timestamps,
+        durations,
         missing,
-      }
-      row.planning = hours(row.b1, row.b2)
-      row.response = hours(row.b2, row.b3)
-      row.closing = hours(row.b3, row.b4)
-      row.total = hours(row.b1, row.b4)
-      return row
+      } satisfies TaskTimesheet
     })
-    .sort((a, b) => a.task - b.task)
+    .sort((a, b) => a.number - b.number)
 }
 
 const TIME = (iso?: string) => iso
   ? new Date(iso).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
   : '—'
-const SPAN = (row: TimesheetRow, key: string, value?: number) =>
-  value === undefined ? (row.missing.includes(key) ? '缺失' : '—') : `${value.toFixed(1)}h`
 
 /** 计划 issue 的评论正文；仅内部使用，不是接口格式。 */
-export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[], project = ''): string {
-  const header = ['计划', '任务', '岗位', '负责人', 'B1 话题开始', 'B2 正式发布', 'B3 首次提交', 'B4 计划完成',
-    '规划期 B2−B1', '响应期 B3−B2', '收尾期 B4−B3', '全周期 B4−B1']
+export function renderMarkdown(plan: PlanIssue, roles: RoleTimesheet[], project = ''): string {
+  const header = ['任务', '岗位', '负责人', '需求开始', '计划发布', '首次提交', '计划完成',
+    '规划期', '响应期', '收尾期', '全周期']
   const line = (cells: string[]) => `| ${cells.join(' | ')} |`
-  const body = rows.map(row => line([
-    `#${plan.number}`,
-    `#${row.task}`,
-    row.role,
-    row.person,
-    TIME(row.b1),
-    TIME(row.b2),
-    TIME(row.b3),
-    TIME(row.b4),
-    SPAN(row, 'b2', row.planning),
-    SPAN(row, 'b3', row.response),
-    SPAN(row, 'b4', row.closing),
-    SPAN(row, 'b4', row.total),
-  ]))
+  const needs = { planning: 'requirement_start', response: 'submitted', closing: 'plan_completed', total: 'plan_completed' } as const
+  const span = (task: TaskTimesheet, key: keyof TaskDurations) => {
+    const value = task.durations[key]
+    return value === undefined ? (task.missing.includes(needs[key]) ? '缺失' : '—') : `${value.toFixed(1)}h`
+  }
+  const body = roles.flatMap(role => role.tasks.map(task => line([
+    `#${task.number}`,
+    role.name,
+    role.person,
+    TIME(task.timestamps.requirement_start),
+    TIME(task.timestamps.plan_published),
+    TIME(task.timestamps.submitted),
+    TIME(task.timestamps.plan_completed),
+    span(task, 'planning'),
+    span(task, 'response'),
+    span(task, 'closing'),
+    span(task, 'total'),
+  ])))
   return [
     '<!-- dsh-timesheet -->',
-    `## 工时（交付时长）：${project ? `${project} · ` : ''}${plan.title}`,
+    `## 工时（交付时长）：${project || plan.title}`,
     '',
     line(header),
     line(header.map(() => '---')),
     ...body,
     '',
-    '> B1 话题开始（原始需求消息）→ B2 计划创建 → B3 该任务首个结果 PR → B4 计划关闭。缺失的时刻标为「缺失」，不做推算。',
+    '> 需求开始 → 计划发布 → 首次提交 → 计划完成；缺失的时刻标为「缺失」，不做推算。',
   ].join('\n')
 }
-/** 管理岗（审批人）的一次决策。 */
-export interface CoordinationEvent {
-  at: string
-  kind: 'confirm' | 'approve' | 'rework' | 'stop'
-  plan: number
-  pull?: number
-}
-
-/**
- * 管理岗的协调与审核统计：复用 B1（需求开始）、B2（计划发布）、B4（计划完成），
- * 不套用任务行的交付时长；没有决策消息时整个对象为 null。
- */
-export interface Coordination {
-  plan: number
-  role: string
-  person: string
-  requirement_start?: string
-  plan_published?: string
-  plan_completed?: string
-  wait_confirm_hours?: number
-  wait_close_hours?: number
-  events: CoordinationEvent[]
-}
-
