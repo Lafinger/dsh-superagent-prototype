@@ -140,12 +140,15 @@ function timesheetView(runtime: HttpHost, plan: string | undefined): TimesheetVi
   const project = projectIdentity(runtime)
   const source = timesheetSource(runtime)
   // Without a plan number the route returns every plan's rows.
-  if (plan === undefined || plan === '') return { ...project, rows: collectAllTimesheets(source) }
+  if (plan === undefined || plan === '') {
+    const all = collectAllTimesheets(source)
+    return { ...project, rows: all.rows, coordinations: all.coordinations }
+  }
   const number = planNumber(plan)
   if (number === undefined) throw new RouteError(400, 'plan must be a positive integer')
   const collected = collectTimesheet(source, number)
   if (!collected) throw new RouteError(404, `Plan #${number} not found`)
-  return { ...project, rows: collected.rows }
+  return { ...project, rows: collected.rows, coordination: collected.coordination }
 }
 /** `POST /timesheet/post`: comments one plan's table on its plan issue, unless already there. */
 function timesheetPost(runtime: HttpHost, plan: string | undefined): TimesheetPostView {
@@ -303,6 +306,7 @@ export function registerHttp(ctx: Context, runtime: HttpHost): () => void {
     } })]
   return () => { for (const dispose of disposers) dispose() }
 }
+
 
 
 

@@ -181,4 +181,25 @@ export function renderMarkdown(plan: PlanIssue, rows: TimesheetRow[], project = 
     '> B1 话题开始（原始需求消息）→ B2 计划创建 → B3 该任务首个结果 PR → B4 计划关闭。缺失的时刻标为「缺失」，不做推算。',
   ].join('\n')
 }
+/** 管理岗（审批人）的一次决策。 */
+export interface CoordinationEvent {
+  at: string
+  kind: 'confirm' | 'approve' | 'rework' | 'stop'
+  plan: number
+  pull?: number
+}
 
+/**
+ * 管理岗的协调与审核统计：复用 B1（需求开始）、B2（计划发布）、B4（计划完成），
+ * 不套用任务行的交付时长；没有决策消息时整个对象为 null。
+ */
+export interface Coordination {
+  role: string
+  person: string
+  requirement_start?: string
+  plan_published?: string
+  plan_completed?: string
+  wait_confirm_hours?: number
+  wait_close_hours?: number
+  events: CoordinationEvent[]
+}

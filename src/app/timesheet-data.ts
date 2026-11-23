@@ -1,7 +1,7 @@
 /** 工时数据装配 v3：读计划/任务 issue、结果 PR 与话题起点，产出 B1–B4 行，并可回贴计划 issue。 */
 import { execFileSync } from 'node:child_process'
 import type { Ticket, Trigger } from '../core/index.ts'
-import { buildRows, declaresPlan, renderMarkdown, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
+import { buildRows, declaresPlan, hours, renderMarkdown, type Coordination, type CoordinationEvent, type PlanIssue, type PullRequest, type TaskIssue, type TimesheetRow } from '../sources/timesheet.ts'
 
 /** 计划完成时回贴的评论标记，用于幂等。 */
 export const TIMESHEET_MARK = '<!-- dsh-timesheet -->'
@@ -80,7 +80,7 @@ function planIssue(cli: string, repository: string, number: number): PlanIssue |
 }
 
 /** 拉取一个计划的 B1–B4 行；计划号不存在时返回 undefined。 */
-export function collectTimesheet(source: TimesheetSource, planNumber: number): { plan: PlanIssue; rows: TimesheetRow[] } | undefined {
+export function collectTimesheet(source: TimesheetSource, planNumber: number): { plan: PlanIssue; rows: TimesheetRow[]; coordination: Coordination | null } | undefined {
   const plan = planIssue(source.cli, source.repository, planNumber)
   if (!plan?.title) return undefined
   const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
@@ -102,7 +102,10 @@ export function collectTimesheet(source: TimesheetSource, planNumber: number): {
   const base = `https://github.com/${source.repository}`
   const starts = threadStartByPlan([plan], source.tickets, source.triggerOf)
   const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
-  return { plan, rows: buildRows({ plan, tasks, pulls, threadStartedAt, base }) }
+  const rows = buildRows({ plan, tasks, pulls, threadStartedAt, base })
+  const approver = readApprover(source.cli, source.repository)
+  const events = approver ? coordinationEvents(source.tickets, source.triggerOf, approver, plan.number) : []
+  return { plan, rows, coordination: coordinationOf({ plan, rows, events, approver }) }
 }
 
 /** 工单以 completed 结束时，找出刚刚关闭的计划 issue（±10 分钟窗口）。 */
@@ -159,7 +162,7 @@ export function threadStartByPlan(plans: PlanIssue[], tickets: Ticket[], trigger
 }
 
 /** 拉取仓库里所有计划的 B1–B4 行（按计划号、任务号排序）。 */
-export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
+export function collectAllTimesheets(source: TimesheetSource): { rows: TimesheetRow[]; coordinations: Coordination[] } {
   const issues = ghJsonPages(source.cli, `repos/${source.repository}/issues?state=all&per_page=100`)
   const plans: PlanIssue[] = []
   const tasks: TaskIssue[] = []
@@ -181,15 +184,109 @@ export function collectAllTimesheets(source: TimesheetSource): TimesheetRow[] {
   }
   const starts = threadStartByPlan(plans, source.tickets, source.triggerOf)
   const base = `https://github.com/${source.repository}`
-  const rows = plans.flatMap(plan => {
+  const perPlan = plans.map(plan => {
     const own = tasks.filter(task => declaresPlan(task.body, plan.number))
     const threadStartedAt = source.planLinkOf(plan.number)?.at ?? starts.get(plan.number)
-    return buildRows({ plan, tasks: own, pulls, threadStartedAt, base })
+    return { plan, rows: buildRows({ plan, tasks: own, pulls, threadStartedAt, base }) }
   })
-  return rows.sort((a, b) => a.plan - b.plan || a.task - b.task)
+  const rows = perPlan.flatMap(item => item.rows).sort((a, b) => a.plan - b.plan || a.task - b.task)
+  const approver = readApprover(source.cli, source.repository)
+  const coordinations = approver
+    ? perPlan
+        .map(item => coordinationOf({ plan: item.plan, rows: item.rows, approver,
+          events: coordinationEvents(source.tickets, source.triggerOf, approver, item.plan.number) }))
+        .filter((item): item is Coordination => item !== null)
+    : []
+  return { rows, coordinations }
+}
+/** 管理岗（审批人）：来自 team.yml 的 approver 块。 */
+export interface Approver { role: string; person: string; openId?: string }
+
+/** 读仓库里 settings/team.yml 的 approver 块；读不到时返回 undefined（coordination 随之为 null）。 */
+export function readApprover(cli: string, repository: string): Approver | undefined {
+  let text: string
+  try {
+    const body = asObject(ghJson(cli, `repos/${repository}/contents/settings/team.yml`))
+    text = Buffer.from(asString(body.content), 'base64').toString('utf8')
+  } catch {
+    return undefined
+  }
+  return parseApprover(text)
 }
 
+/** 从 team.yml 文本解析 approver 块：岗位名、姓名、open_id。 */
+export function parseApprover(text: string): Approver | undefined {
+  const lines = text.split(/\r?\n/)
+  const start = lines.findIndex(line => /^approver:\s*$/.test(line))
+  if (start < 0) return undefined
+  const block: string[] = []
+  for (let index = start + 1; index < lines.length; index++) {
+    const line = lines[index] ?? ''
+    if (line.trim() && !/^\s/.test(line)) break
+    if (line.trim() && !/^\s*#/.test(line)) block.push(line)
+  }
+  const pick = (key: string) => block
+    .map(line => line.match(new RegExp(`^\\s*${key}:\\s*(.+)$`))?.[1]?.trim())
+    .find(value => !!value)
+  const role = pick('name') ?? '管理岗'
+  const person = pick('feishu_name') ?? pick('name') ?? ''
+  const openId = pick('feishu_open_id')
+  return { role, person, ...(openId ? { openId } : {}) }
+}
 
+const EVENT_RULES: readonly [CoordinationEvent['kind'], RegExp][] = [
+  ['stop', /(终止|停止)/],
+  ['rework', /(不接受|不同意|返工|驳回|需要修改|有异议)/],
+  ['confirm', /(计划|草案)[\s\S]*(同意|确认|通过)|(同意|确认|通过)[\s\S]*(计划|草案)/],
+  ['approve', /(验收|成果|交付)[\s\S]*(通过|接受|同意)|(通过|接受|同意)[\s\S]*(验收|成果|交付)/],
+]
+
+/** 管理岗发出的决策消息，按时间排序；按 open_id 认人，没有 open_id 时退回姓名。 */
+export function coordinationEvents(tickets: Ticket[], triggerOf: (id: string) => Trigger | undefined,
+  approver: Approver, plan: number): CoordinationEvent[] {
+  const events: CoordinationEvent[] = []
+  for (const ticket of tickets) {
+    for (const input of ticket.inputs ?? []) {
+      const triggerId = (input as { triggerId?: string }).triggerId
+      const trigger = typeof triggerId === 'string' ? triggerOf(triggerId) : undefined
+      if (!trigger?.at) continue
+      const actor = asObject(trigger.actor)
+      const actorId = asString(actor.id)
+      const name = asObject(actor.name)
+      const mine = approver.openId ? actorId === approver.openId
+        : (asString(name.zh) || asString(name.en)) === approver.person
+      if (!mine) continue
+      const text = asString(trigger.text)
+      const shortAgree = text.trim().length <= 12 && /(同意|确认|通过|没问题)/.test(text)
+      const kind = EVENT_RULES.find(([, pattern]) => pattern.test(text))?.[0] ?? (shortAgree ? 'confirm' as const : undefined)
+      if (!kind) continue
+      events.push({ at: trigger.at, kind, plan })
+    }
+  }
+  return events.sort((a, b) => a.at.localeCompare(b.at)).slice(0, 50)
+}
+
+/** 组装管理岗的 coordination：复用 B1/B2/B4，派生两段等待；没有审批人时返回 null。 */
+export function coordinationOf(input: { plan: PlanIssue; rows: TimesheetRow[]; events: CoordinationEvent[];
+  approver?: Approver }): Coordination | null {
+  const { plan, rows, events, approver } = input
+  if (!approver) return null
+  const requirementStart = rows[0]?.b1
+  const planPublished = plan.createdAt || undefined
+  const planCompleted = plan.closedAt ?? undefined
+  const confirmWait = hours(requirementStart, planPublished)
+  const closeWait = hours(planPublished, planCompleted)
+  return {
+    role: approver.role,
+    person: approver.person,
+    ...(requirementStart ? { requirement_start: requirementStart } : {}),
+    ...(planPublished ? { plan_published: planPublished } : {}),
+    ...(planCompleted ? { plan_completed: planCompleted } : {}),
+    ...(confirmWait !== undefined ? { wait_confirm_hours: confirmWait } : {}),
+    ...(closeWait !== undefined ? { wait_close_hours: closeWait } : {}),
+    events,
+  }
+}
 
 
 

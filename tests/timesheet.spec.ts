@@ -220,3 +220,50 @@ describe('task body contract', () => {
     expect(text).toContain('**角色**：<role> · <person>')
   })
 })
+
+describe('parseApprover', () => {
+  it('reads the approver block and stops at the next top-level key', async () => {
+    const { parseApprover } = await import('../src/app/timesheet-data.ts')
+    const yaml = ['approver:', '  name: 管理岗', '  feishu_open_id: ou_x', '  feishu_name: Lafinger', 'roles:', '  - key: design'].join('\n')
+    expect(parseApprover(yaml)).toEqual({ role: '管理岗', person: 'Lafinger', openId: 'ou_x' })
+  })
+  it('returns undefined when team.yml has no approver block', async () => {
+    const { parseApprover } = await import('../src/app/timesheet-data.ts')
+    expect(parseApprover('roles:\n  - key: design')).toBeUndefined()
+  })
+})
+
+describe('coordinationOf', () => {
+  const plan = { number: 1, title: 'p', body: '', createdAt: '2026-11-16T10:04:03Z', closedAt: '2026-11-18T09:26:10Z' }
+  it('reuses b1/b2/b4 and derives the two waits', async () => {
+    const { coordinationOf } = await import('../src/app/timesheet-data.ts')
+    const rows = [{ b1: '2026-11-16T09:51:13Z' } as TimesheetRow]
+    const result = coordinationOf({ plan, rows, events: [], approver: { role: '管理岗', person: 'Lafinger' } })
+    expect(result?.requirement_start).toBe('2026-11-16T09:51:13Z')
+    expect(result?.plan_published).toBe('2026-11-16T10:04:03Z')
+    expect(result?.plan_completed).toBe('2026-11-18T09:26:10Z')
+    expect(result?.wait_confirm_hours).toBeCloseTo(0.21, 2)
+    expect(result?.wait_close_hours).toBeCloseTo(47.37, 1)
+  })
+  it('is null when team.yml names no approver', async () => {
+    const { coordinationOf } = await import('../src/app/timesheet-data.ts')
+    expect(coordinationOf({ plan, rows: [], events: [] })).toBeNull()
+  })
+})
+
+describe('coordinationEvents', () => {
+  it('keeps only the approver messages and classifies them', async () => {
+    const { coordinationEvents } = await import('../src/app/timesheet-data.ts')
+    const tickets = [{ inputs: [{ triggerId: 'a' }, { triggerId: 'b' }, { triggerId: 'c' }] }] as never
+    const triggers: Record<string, unknown> = {
+      a: { at: '2026-11-16T10:00:00Z', text: '同意', actor: { id: 'ou_boss' } },
+      b: { at: '2026-11-17T10:00:00Z', text: '不接受这个成果，请返工', actor: { id: 'ou_boss' } },
+      c: { at: '2026-11-18T10:00:00Z', text: '终止本计划', actor: { id: 'ou_other' } },
+    }
+    const events = coordinationEvents(tickets, id => triggers[id] as never, { role: '管理岗', person: 'L', openId: 'ou_boss' }, 6)
+    expect(events).toEqual([
+      { at: '2026-11-16T10:00:00Z', kind: 'confirm', plan: 6 },
+      { at: '2026-11-17T10:00:00Z', kind: 'rework', plan: 6 },
+    ])
+  })
+})
