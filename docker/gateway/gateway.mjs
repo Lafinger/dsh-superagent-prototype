@@ -465,55 +465,103 @@ async function statusOf(id) {
 
 // ---------- 页面 ----------
 const PAGE = `<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><title>项目实例</title>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>项目实例</title>
 <style>
-body{font:14px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif;margin:24px;color:#111;background:#fafafa}
-h1{font-size:18px;margin:0 0 16px}
-table{border-collapse:collapse;width:100%;background:#fff}
-th,td{border:1px solid #e5e5e5;padding:8px;text-align:left;font-size:13px}
-th{background:#f3f3f3;font-weight:600}
-.ok{color:#0a7f3f}.bad{color:#b3261e}
-form{background:#fff;border:1px solid #e5e5e5;padding:16px;margin-top:24px;max-width:860px}
-fieldset{border:1px solid #e5e5e5;margin:14px 0;padding:10px}
-legend{font-weight:600;font-size:13px}
-label{display:block;margin:8px 0 4px;font-size:12px;color:#555}
-input,select{width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
-.role{display:flex;gap:6px;margin:6px 0}
-.role input,.role select{width:auto;flex:1}
-button{margin-top:10px;padding:8px 14px;border:0;border-radius:4px;background:#2563eb;color:#fff;cursor:pointer}
-button.danger{background:#b3261e;padding:2px 8px;font-size:12px;margin:0}
-button.ghost{background:#6b7280}
-pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:240px;font-size:12px}
+:root{--bg:#f5f6f8;--card:#fff;--line:#e3e5e8;--text:#16181d;--muted:#6b7280;--brand:#2563eb;--ok:#0a7f3f;--bad:#b3261e;--warn:#a15c00}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif}
+.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 64px}
+header{margin-bottom:18px}
+h1{font-size:20px;margin:0 0 4px}
+h2{font-size:14px;margin:0}
+.sub{color:var(--muted);font-size:12px;margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+.card-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.muted{color:var(--muted);font-size:12px}
+table.grid{width:100%;border-collapse:collapse}
+table.grid th,table.grid td{border-bottom:1px solid var(--line);padding:9px 8px;text-align:left;font-size:13px}
+table.grid th{color:var(--muted);font-weight:600;font-size:12px;background:#fafbfc}
+table.grid tr:last-child td{border-bottom:0}
+.right{text-align:right}
+.badge{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;border:1px solid transparent}
+.badge.ok{color:var(--ok);background:#eaf6ef;border-color:#cbe8d6}
+.badge.bad{color:var(--bad);background:#fdeceb;border-color:#f6cdc9}
+.badge.warn{color:var(--warn);background:#fdf3e6;border-color:#f3dfc2}
+label{display:block;font-size:12px;color:var(--muted);margin:0 0 4px}
+input,select{width:100%;padding:7px 9px;border:1px solid #d3d6db;border-radius:6px;background:#fff;font:inherit;color:inherit}
+input:focus,select:focus{outline:2px solid #c7d7fb;border-color:var(--brand)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+.span2{grid-column:1 / -1}
+.row{display:flex;gap:8px;align-items:center}
+.row input{flex:1}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:16px 0 0;padding:12px 14px 14px}
+legend{font-size:12px;color:var(--muted);padding:0 6px}
+.roles-wrap{overflow-x:auto}
+table.roles{width:100%;border-collapse:collapse;min-width:760px}
+table.roles th,table.roles td{padding:6px 4px;text-align:left;font-size:12px;color:var(--muted);font-weight:600}
+table.roles td{color:var(--text);font-weight:400}
+table.roles input,table.roles select{padding:5px 6px;font-size:12px}
+button{padding:8px 14px;border:1px solid transparent;border-radius:7px;background:var(--brand);color:#fff;font:inherit;cursor:pointer}
+button:hover{filter:brightness(.96)}
+button.ghost{background:#fff;color:var(--text);border-color:#d3d6db}
+button.danger{background:#fff;color:var(--bad);border-color:#f0c4c0;padding:3px 9px;font-size:12px}
+.actions{display:flex;align-items:center;gap:12px;margin-top:16px}
+pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px;font-size:12px;line-height:1.5;overflow:auto;max-height:260px;margin:0;white-space:pre-wrap;word-break:break-word}
+@media (max-width:820px){.grid2{grid-template-columns:1fr}}
 </style></head><body>
-<h1>项目实例</h1>
-<table><thead><tr><th>项目</th><th>端口</th><th>状态</th><th>健康</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table>
-<form id="create"><strong>新建项目</strong>
-<label>项目名（小写字母/数字/连字符）</label><input name="name" required placeholder="kb2">
-<label>显示名</label><input name="displayName" placeholder="知识库项目">
-<label>仓库 owner</label><input name="owner" placeholder="lafinger-agent">
-<label>仓库名（留空 = dsh-&lt;项目名&gt;）</label><input name="repoName" placeholder="dsh-kb2">
-<label>GitHub 账号（协作者 + 准入，逗号分隔，必填）</label><input name="collaborators" required placeholder="Lafinger,zhengze736">
-<label>飞书 App ID</label><input name="appId" required>
-<label>飞书 App Secret</label><input name="appSecret" required type="password">
-<label>飞书项目群 ID</label><input name="chatId" placeholder="oc_xxxxxxxx">
-<button type="button" class="ghost" id="loadMembers">读取群成员</button> <span id="memberHint"></span>
-<fieldset><legend>审批人（管理岗）</legend>
-<label>名字</label><input name="approverName" value="管理岗">
-<label>从群成员选择</label><select id="approverPick"><option value="">（手工填 open_id）</option></select>
-<label>open_id</label><input name="approverOpenId" placeholder="ou_xxxxxxxx">
-<label>GitHub 账号</label><input name="approverGithub" placeholder="Lafinger">
-</fieldset>
-<fieldset><legend>岗位（team.yml 的 roles，按 order 顺序交付）</legend><div id="roles"></div><button type="button" class="ghost" id="addRole">+ 添加岗位</button></fieldset>
-<button type="submit">创建并启动</button>
-</form>
-<pre id="out"></pre>
+<div class="wrap">
+<header><h1>项目实例</h1><p class="sub">一个项目 = 一个容器；创建时自动建仓库、写 team.yml、配飞书群与准入。</p></header>
+
+<section class="card">
+  <div class="card-head"><h2>项目</h2><span id="count" class="muted"></span></div>
+  <table class="grid"><thead><tr><th>项目</th><th>端口</th><th>状态</th><th>健康</th><th class="right">操作</th></tr></thead><tbody id="rows"></tbody></table>
+</section>
+
+<section class="card">
+  <div class="card-head"><h2>新建项目</h2><span class="muted">创建约 1–2 分钟</span></div>
+  <form id="create">
+    <div class="grid2">
+      <div><label>项目名（小写字母/数字/连字符）</label><input name="name" required placeholder="kb2"></div>
+      <div><label>显示名</label><input name="displayName" placeholder="知识库项目"></div>
+      <div><label>仓库 owner</label><input name="owner" placeholder="lafinger-agent"></div>
+      <div><label>仓库名（留空 = dsh-&lt;项目名&gt;）</label><input name="repoName" placeholder="dsh-kb2"></div>
+      <div class="span2"><label>GitHub 账号（协作者 + 准入，逗号分隔，必填）</label><input name="collaborators" required placeholder="Lafinger,zhengze736"></div>
+      <div><label>飞书 App ID</label><input name="appId" required></div>
+      <div><label>飞书 App Secret</label><input name="appSecret" required type="password"></div>
+      <div class="span2"><label>飞书项目群 ID</label>
+        <div class="row"><input name="chatId" placeholder="oc_xxxxxxxx"><button type="button" class="ghost" id="loadMembers">读取群成员</button><span id="memberHint" class="muted"></span></div>
+      </div>
+    </div>
+
+    <fieldset><legend>审批人（管理岗）</legend>
+      <div class="grid2">
+        <div><label>名字</label><input name="approverName" value="管理岗"></div>
+        <div><label>从群成员选择</label><select id="approverPick"><option value="">（手工填 open_id）</option></select></div>
+        <div><label>open_id</label><input name="approverOpenId" placeholder="ou_xxxxxxxx"></div>
+        <div><label>GitHub 账号</label><input name="approverGithub" placeholder="Lafinger"></div>
+      </div>
+    </fieldset>
+
+    <fieldset><legend>岗位（team.yml 的 roles，按 order 顺序交付）</legend>
+      <div class="roles-wrap">
+        <table class="roles"><thead><tr><th>成员</th><th>Key</th><th>岗位名</th><th>顺序</th><th>open_id</th><th>GitHub</th><th>目录</th><th></th></tr></thead><tbody id="roles"></tbody></table>
+      </div>
+      <button type="button" class="ghost" id="addRole">+ 添加岗位</button>
+    </fieldset>
+
+    <div class="actions"><button type="submit">创建并启动</button><span class="muted">等容器 healthy 后返回结果</span></div>
+  </form>
+</section>
+
+<section class="card"><div class="card-head"><h2>执行结果</h2></div><pre id="out"></pre></section>
+</div>
 <script>
 var members = []
 var roleBox = document.getElementById('roles')
 function optionHtml(m) { return '<option value="' + m.openId + '">' + m.name + '</option>' }
 function fillMemberSelects() {
-  var pick = document.getElementById('approverPick')
-  pick.innerHTML = '<option value="">（手工填 open_id）</option>' + members.map(optionHtml).join('')
+  document.getElementById('approverPick').innerHTML = '<option value="">（手工填 open_id）</option>' + members.map(optionHtml).join('')
   var selects = roleBox.querySelectorAll('select')
   for (var i = 0; i < selects.length; i++) {
     var current = selects[i].value
@@ -522,18 +570,20 @@ function fillMemberSelects() {
   }
 }
 function addRole(values) {
-  var row = document.createElement('div')
+  var row = document.createElement('tr')
   row.className = 'role'
-  row.innerHTML = '<select class="roleMember"><option value="">（手工填）</option>' + members.map(optionHtml).join('') + '</select>' +
-    '<input name="roleKey" placeholder="key 如 design">' +
-    '<input name="roleName" placeholder="岗位名">' +
-    '<input name="roleOrder" placeholder="顺序">' +
-    '<input name="roleOpenId" placeholder="open_id">' +
-    '<input name="roleGithub" placeholder="GitHub">' +
-    '<input name="roleDir" placeholder="目录 如 design/">'
+  row.innerHTML = '<td><select class="roleMember"><option value="">（手工填）</option>' + members.map(optionHtml).join('') + '</select></td>' +
+    '<td><input name="roleKey" placeholder="design"></td>' +
+    '<td><input name="roleName" placeholder="设计岗"></td>' +
+    '<td><input name="roleOrder" placeholder="1" style="width:56px"></td>' +
+    '<td><input name="roleOpenId" placeholder="ou_…"></td>' +
+    '<td><input name="roleGithub" placeholder="Lafinger"></td>' +
+    '<td><input name="roleDir" placeholder="design/"></td>' +
+    '<td><button type="button" class="danger">删除</button></td>'
   roleBox.appendChild(row)
   var pick = row.querySelector('.roleMember'), open = row.querySelector('[name=roleOpenId]')
   pick.onchange = function () { if (pick.value) open.value = pick.value }
+  row.querySelector('button').onclick = function () { row.remove() }
   if (values) for (var key in values) { var input = row.querySelector('[name=' + key + ']'); if (input) input.value = values[key] }
 }
 document.getElementById('addRole').onclick = function () { addRole({}) }
@@ -555,18 +605,23 @@ document.getElementById('loadMembers').onclick = async function () {
 }
 addRole({ roleKey: 'design', roleName: '设计岗', roleOrder: '1', roleDir: 'design/' })
 addRole({ roleKey: 'implement', roleName: '实施岗', roleOrder: '2', roleDir: 'app/' })
+
 var rows = document.getElementById('rows'), out = document.getElementById('out')
-function log(text) { out.textContent = text }
+function badge(ok, text, kind) { return '<span class="badge ' + kind + '">' + text + '</span>' }
 async function refresh() {
   var list = await fetch('/projects').then(function (r) { return r.json() })
+  document.getElementById('count').textContent = list.length + ' 个'
   rows.innerHTML = list.map(function (p) {
-    return '<tr><td>' + p.id + '</td><td>' + p.port + '</td><td class="' + (p.status && p.status.running ? 'ok' : 'bad') + '">' + (p.status && p.status.running ? '运行中' : '未运行') + '</td><td>' + ((p.status && p.status.health) || '-') + '</td><td><button class="danger" data-id="' + p.id + '">删除</button></td></tr>'
+    var running = p.status && p.status.running
+    var health = (p.status && p.status.health) || '—'
+    var healthKind = health === 'healthy' ? 'ok' : health === 'starting' ? 'warn' : 'bad'
+    return '<tr><td><strong>' + p.id + '</strong></td><td>' + p.port + '</td><td>' + badge(running, running ? '运行中' : '未运行', running ? 'ok' : 'bad') + '</td><td>' + badge(true, health, healthKind) + '</td><td class="right"><button class="danger" data-id="' + p.id + '">删除</button></td></tr>'
   }).join('')
   var buttons = rows.querySelectorAll('button')
   for (var i = 0; i < buttons.length; i++) {
     buttons[i].onclick = async function () {
       if (!confirm('删除容器？数据卷会保留')) return
-      log(await fetch('/projects/' + this.dataset.id, { method: 'DELETE' }).then(function (r) { return r.text() }))
+      out.textContent = await fetch('/projects/' + this.dataset.id, { method: 'DELETE' }).then(function (r) { return r.text() })
       refresh()
     }
   }
@@ -574,13 +629,12 @@ async function refresh() {
 document.getElementById('create').onsubmit = async function (event) {
   event.preventDefault()
   var body = {}
-  var data = new FormData(event.target)
-  data.forEach(function (value, key) { if (value !== '') body[key] = value })
+  new FormData(event.target).forEach(function (value, key) { if (value !== '') body[key] = value })
   if (body.collaborators) body.collaborators = body.collaborators.split(',').map(function (s) { return s.trim() }).filter(Boolean)
   var roles = []
-  var rowsEls = roleBox.querySelectorAll('.role')
-  for (var i = 0; i < rowsEls.length; i++) {
-    var row = rowsEls[i]
+  var roleRows = roleBox.querySelectorAll('tr.role')
+  for (var i = 0; i < roleRows.length; i++) {
+    var row = roleRows[i]
     var role = {
       key: row.querySelector('[name=roleKey]').value.trim(),
       name: row.querySelector('[name=roleName]').value.trim(),
@@ -597,9 +651,9 @@ document.getElementById('create').onsubmit = async function (event) {
   var allowed = approver.openId ? [approver.openId] : []
   for (var j = 0; j < roles.length; j++) if (roles[j].openId) allowed.push(roles[j].openId)
   if (allowed.length) body.feishuAllowed = allowed
-  log('创建中…（启动 + 配置约 1–2 分钟）')
+  out.textContent = '创建中…'
   var response = await fetch('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
-  log(await response.text())
+  out.textContent = await response.text()
   refresh()
 }
 refresh(); setInterval(refresh, 15000)
@@ -679,6 +733,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
 
 
 
