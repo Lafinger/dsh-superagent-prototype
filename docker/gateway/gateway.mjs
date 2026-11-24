@@ -304,6 +304,25 @@ async function writeTeamFile(repository, spec, token) {
   }, token)
 }
 
+// ---------- 飞书群成员 ----------
+/** 用应用凭据读群成员，返回 [{openId, name}]；不需要 lark-cli。 */
+async function feishuMembers(appId, appSecret, chatId) {
+  if (!appId || !appSecret || !chatId) throw Object.assign(new Error('需要 App ID、App Secret 与群 ID'), { status: 400 })
+  const tokenResponse = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+  })
+  const tokenBody = await tokenResponse.json()
+  if (tokenBody.code !== 0) throw Object.assign(new Error(`获取 token 失败：${tokenBody.msg ?? tokenBody.code}`), { status: 400 })
+  const response = await fetch(`https://open.feishu.cn/open-apis/im/v1/chats/${encodeURIComponent(chatId)}/members?member_id_type=open_id&page_size=100`, {
+    headers: { authorization: `Bearer ${tokenBody.tenant_access_token}` },
+  })
+  const body = await response.json()
+  if (body.code !== 0) throw Object.assign(new Error(`读取群成员失败：${body.msg ?? body.code}`), { status: 400 })
+  return (body.data?.items ?? []).map(item => ({ openId: item.member_id, name: item.name }))
+}
+
 // ---------- 创建 / 删除 ----------
 async function createProject(input) {
   const id = String(input.name ?? '').trim().toLowerCase()
@@ -411,7 +430,10 @@ async function createProject(input) {
       otherChats: input.otherChats,
       repository,
       observe: input.observe,
-      feishuAllowed: normalizeUsers(input.feishuAllowed),
+      // 未显式给飞书准入时，用审批人与各岗位的 open_id 兜底
+      feishuAllowed: normalizeUsers(input.feishuAllowed).length
+        ? normalizeUsers(input.feishuAllowed)
+        : [teamSpec.approver.openId, ...teamSpec.roles.map(role => role.openId)].filter(Boolean).map(id => ({ id })),
       githubAllowed: collaborators, // 与协作者合并为同一份名单：既能提需求，也能推 PR
     })
   } catch (error) { settings = { error: String(error?.message ?? error) } }
@@ -451,74 +473,132 @@ table{border-collapse:collapse;width:100%;background:#fff}
 th,td{border:1px solid #e5e5e5;padding:8px;text-align:left;font-size:13px}
 th{background:#f3f3f3;font-weight:600}
 .ok{color:#0a7f3f}.bad{color:#b3261e}
-form{background:#fff;border:1px solid #e5e5e5;padding:16px;margin-top:24px;max-width:720px}
+form{background:#fff;border:1px solid #e5e5e5;padding:16px;margin-top:24px;max-width:860px}
+fieldset{border:1px solid #e5e5e5;margin:14px 0;padding:10px}
+legend{font-weight:600;font-size:13px}
 label{display:block;margin:8px 0 4px;font-size:12px;color:#555}
 input,select{width:100%;padding:6px 8px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box}
-button{margin-top:14px;padding:8px 14px;border:0;border-radius:4px;background:#2563eb;color:#fff;cursor:pointer}
+.role{display:flex;gap:6px;margin:6px 0}
+.role input,.role select{width:auto;flex:1}
+button{margin-top:10px;padding:8px 14px;border:0;border-radius:4px;background:#2563eb;color:#fff;cursor:pointer}
 button.danger{background:#b3261e;padding:2px 8px;font-size:12px;margin:0}
-pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:220px;font-size:12px}
+button.ghost{background:#6b7280}
+pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:240px;font-size:12px}
 </style></head><body>
 <h1>项目实例</h1>
 <table><thead><tr><th>项目</th><th>端口</th><th>状态</th><th>健康</th><th>操作</th></tr></thead><tbody id="rows"></tbody></table>
 <form id="create"><strong>新建项目</strong>
 <label>项目名（小写字母/数字/连字符）</label><input name="name" required placeholder="kb2">
 <label>显示名</label><input name="displayName" placeholder="知识库项目">
-<label>仓库 owner（默认 lafinger-agent）</label><input name="owner" placeholder="lafinger-agent">
+<label>仓库 owner</label><input name="owner" placeholder="lafinger-agent">
 <label>仓库名（留空 = dsh-&lt;项目名&gt;）</label><input name="repoName" placeholder="dsh-kb2">
 <label>GitHub 账号（协作者 + 准入，逗号分隔，必填）</label><input name="collaborators" required placeholder="Lafinger,zhengze736">
-<label>管理岗 open_id（写进 team.yml 的 approver）</label><input name="approverOpenId" placeholder="ou_xxxxxxxx">
-<label>端口（留空自动分配）</label><input name="port" placeholder="3085">
 <label>飞书 App ID</label><input name="appId" required>
 <label>飞书 App Secret</label><input name="appSecret" required type="password">
-<label>飞书项目群 ID（oc_ 开头，可留空）</label><input name="chatId" placeholder="oc_xxxxxxxx">
-<label>群接收模式</label><select name="listen"><option value="mentions">仅 @ 机器人</option><option value="all">接收全部消息</option></select>
-<label>准入飞书用户 open_id（逗号分隔，可留空）</label><input name="feishuAllowed" placeholder="ou_xxx,ou_yyy">
-<fieldset><legend>岗位（team.yml 的 roles，按 order 顺序交付）</legend><div id="roles"></div><button type="button" id="addRole">+ 添加岗位</button></fieldset>
+<label>飞书项目群 ID</label><input name="chatId" placeholder="oc_xxxxxxxx">
+<button type="button" class="ghost" id="loadMembers">读取群成员</button> <span id="memberHint"></span>
+<fieldset><legend>审批人（管理岗）</legend>
+<label>名字</label><input name="approverName" value="管理岗">
+<label>从群成员选择</label><select id="approverPick"><option value="">（手工填 open_id）</option></select>
+<label>open_id</label><input name="approverOpenId" placeholder="ou_xxxxxxxx">
+<label>GitHub 账号</label><input name="approverGithub" placeholder="Lafinger">
+</fieldset>
+<fieldset><legend>岗位（team.yml 的 roles，按 order 顺序交付）</legend><div id="roles"></div><button type="button" class="ghost" id="addRole">+ 添加岗位</button></fieldset>
 <button type="submit">创建并启动</button>
 </form>
 <pre id="out"></pre>
 <script>
-const rows = document.getElementById('rows'), out = document.getElementById('out')
-const roleBox = document.getElementById('roles')
-function addRole(values) {
-  const row = document.createElement('div')
-  row.className = 'role'
-  row.innerHTML = '<input name="roleKey" placeholder="key 如 design" style="width:16%">' +
-    '<input name="roleName" placeholder="岗位名" style="width:22%">' +
-    '<input name="roleOrder" placeholder="顺序" style="width:10%">' +
-    '<input name="roleGithub" placeholder="GitHub 账号" style="width:24%">' +
-    '<input name="roleDir" placeholder="目录 如 design/" style="width:24%">'
-  for (const input of row.querySelectorAll('input')) input.value = (values && values[input.name]) || ''
-  roleBox.appendChild(row)
+var members = []
+var roleBox = document.getElementById('roles')
+function optionHtml(m) { return '<option value="' + m.openId + '">' + m.name + '</option>' }
+function fillMemberSelects() {
+  var pick = document.getElementById('approverPick')
+  pick.innerHTML = '<option value="">（手工填 open_id）</option>' + members.map(optionHtml).join('')
+  var selects = roleBox.querySelectorAll('select')
+  for (var i = 0; i < selects.length; i++) {
+    var current = selects[i].value
+    selects[i].innerHTML = '<option value="">（手工填）</option>' + members.map(optionHtml).join('')
+    selects[i].value = current
+  }
 }
-document.getElementById('addRole').onclick = () => addRole({})
+function addRole(values) {
+  var row = document.createElement('div')
+  row.className = 'role'
+  row.innerHTML = '<select class="roleMember"><option value="">（手工填）</option>' + members.map(optionHtml).join('') + '</select>' +
+    '<input name="roleKey" placeholder="key 如 design">' +
+    '<input name="roleName" placeholder="岗位名">' +
+    '<input name="roleOrder" placeholder="顺序">' +
+    '<input name="roleOpenId" placeholder="open_id">' +
+    '<input name="roleGithub" placeholder="GitHub">' +
+    '<input name="roleDir" placeholder="目录 如 design/">'
+  roleBox.appendChild(row)
+  var pick = row.querySelector('.roleMember'), open = row.querySelector('[name=roleOpenId]')
+  pick.onchange = function () { if (pick.value) open.value = pick.value }
+  if (values) for (var key in values) { var input = row.querySelector('[name=' + key + ']'); if (input) input.value = values[key] }
+}
+document.getElementById('addRole').onclick = function () { addRole({}) }
+document.getElementById('approverPick').onchange = function () {
+  if (this.value) document.querySelector('[name=approverOpenId]').value = this.value
+}
+document.getElementById('loadMembers').onclick = async function () {
+  var form = document.getElementById('create')
+  var hint = document.getElementById('memberHint')
+  hint.textContent = '读取中…'
+  try {
+    var response = await fetch('/feishu/members', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ appId: form.appId.value, appSecret: form.appSecret.value, chatId: form.chatId.value }) })
+    var body = await response.json()
+    if (!response.ok) throw new Error(body.error || response.status)
+    members = body.members || []
+    fillMemberSelects()
+    hint.textContent = '已读取 ' + members.length + ' 人'
+  } catch (error) { hint.textContent = '读取失败：' + error.message + '（可手工填 open_id）' }
+}
 addRole({ roleKey: 'design', roleName: '设计岗', roleOrder: '1', roleDir: 'design/' })
 addRole({ roleKey: 'implement', roleName: '实施岗', roleOrder: '2', roleDir: 'app/' })
-const log = text => { out.textContent = text }
+var rows = document.getElementById('rows'), out = document.getElementById('out')
+function log(text) { out.textContent = text }
 async function refresh() {
-  const list = await fetch('/projects').then(r => r.json())
-  rows.innerHTML = list.map(p => \`<tr><td>\${p.id}</td><td>\${p.port}</td>
-    <td class="\${p.status?.running ? 'ok' : 'bad'}">\${p.status?.running ? '运行中' : '未运行'}</td>
-    <td>\${p.status?.health ?? '-'}</td>
-    <td><button class="danger" data-id="\${p.id}">删除</button></td></tr>\`).join('')
-  for (const button of rows.querySelectorAll('button')) {
-    button.onclick = async () => {
+  var list = await fetch('/projects').then(function (r) { return r.json() })
+  rows.innerHTML = list.map(function (p) {
+    return '<tr><td>' + p.id + '</td><td>' + p.port + '</td><td class="' + (p.status && p.status.running ? 'ok' : 'bad') + '">' + (p.status && p.status.running ? '运行中' : '未运行') + '</td><td>' + ((p.status && p.status.health) || '-') + '</td><td><button class="danger" data-id="' + p.id + '">删除</button></td></tr>'
+  }).join('')
+  var buttons = rows.querySelectorAll('button')
+  for (var i = 0; i < buttons.length; i++) {
+    buttons[i].onclick = async function () {
       if (!confirm('删除容器？数据卷会保留')) return
-      log(await fetch('/projects/' + button.dataset.id, { method: 'DELETE' }).then(r => r.text()))
+      log(await fetch('/projects/' + this.dataset.id, { method: 'DELETE' }).then(function (r) { return r.text() }))
       refresh()
     }
   }
 }
-document.getElementById('create').onsubmit = async event => {
+document.getElementById('create').onsubmit = async function (event) {
   event.preventDefault()
-  const body = Object.fromEntries([...new FormData(event.target)].filter(([, v]) => v !== ''))
-  for (const key of ['feishuAllowed', 'collaborators']) {
-    if (body[key]) body[key] = body[key].split(',').map(s => s.trim()).filter(Boolean)
+  var body = {}
+  var data = new FormData(event.target)
+  data.forEach(function (value, key) { if (value !== '') body[key] = value })
+  if (body.collaborators) body.collaborators = body.collaborators.split(',').map(function (s) { return s.trim() }).filter(Boolean)
+  var roles = []
+  var rowsEls = roleBox.querySelectorAll('.role')
+  for (var i = 0; i < rowsEls.length; i++) {
+    var row = rowsEls[i]
+    var role = {
+      key: row.querySelector('[name=roleKey]').value.trim(),
+      name: row.querySelector('[name=roleName]').value.trim(),
+      order: Number(row.querySelector('[name=roleOrder]').value) || undefined,
+      openId: row.querySelector('[name=roleOpenId]').value.trim(),
+      github: row.querySelector('[name=roleGithub]').value.trim(),
+      deliverableDir: row.querySelector('[name=roleDir]').value.trim(),
+    }
+    if (role.key && role.name) roles.push(role)
   }
-  const roles = [...roleBox.querySelectorAll('.role')].map(row => ({ key: row.querySelector('[name=roleKey]').value.trim(), name: row.querySelector('[name=roleName]').value.trim(), order: Number(row.querySelector('[name=roleOrder]').value) || undefined, github: row.querySelector('[name=roleGithub]').value.trim(), deliverableDir: row.querySelector('[name=roleDir]').value.trim() })).filter(role => role.key && role.name)
-  if (roles.length) body.team = { approver: { name: '管理岗', openId: body.approverOpenId || '' }, roles }
+  var approver = { name: body.approverName || '管理岗', openId: body.approverOpenId || '', github: body.approverGithub || '' }
+  body.team = { approver: approver, roles: roles }
+  delete body.approverName; delete body.approverOpenId; delete body.approverGithub
+  var allowed = approver.openId ? [approver.openId] : []
+  for (var j = 0; j < roles.length; j++) if (roles[j].openId) allowed.push(roles[j].openId)
+  if (allowed.length) body.feishuAllowed = allowed
   log('创建中…（启动 + 配置约 1–2 分钟）')
-  const response = await fetch('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+  var response = await fetch('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   log(await response.text())
   refresh()
 }
@@ -576,6 +656,12 @@ const server = createServer(async (req, res) => {
       }))
       return json(res, 200, { projects: rows.sort((a, b) => a.id.localeCompare(b.id)), errors })
     }
+    if (url.pathname === '/feishu/members' && req.method === 'POST') {
+      const body = await readBody(req)
+      return json(res, 200, {
+        members: await feishuMembers(String(body.appId ?? ''), String(body.appSecret ?? ''), String(body.chatId ?? '')),
+      })
+    }
     if (url.pathname === '/repos/collaborators' && req.method === 'POST') {
       const body = await readBody(req)
       const repository = String(body.repository ?? '')
@@ -593,6 +679,8 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
+
 
 
 
