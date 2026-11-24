@@ -728,7 +728,7 @@ document.getElementById('create').onsubmit = async function (event) {
   }
   var approver = { name: '管理岗', person: body.approverPerson || '', openId: body.approverOpenId || '', github: body.approverGithub || '' }
   body.team = { approver: approver, roles: roles }
-  delete body.approverName; delete body.approverOpenId; delete body.approverGithub; delete body.approverPerson
+  delete body.approverOpenId; delete body.approverGithub; delete body.approverPerson
   var allowed = approver.openId ? [approver.openId] : []
   for (var j = 0; j < roles.length; j++) if (roles[j].openId) allowed.push(roles[j].openId)
   if (allowed.length) body.feishuAllowed = allowed
