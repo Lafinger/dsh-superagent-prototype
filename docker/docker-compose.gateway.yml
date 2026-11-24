@@ -1,6 +1,6 @@
 # 工时聚合 + 项目控制面网关。
 #
-# 宿主机前端要用时取消 ports 注释（只占一个端口）。
+# 局域网访问：默认绑定 0.0.0.0:3090（可用 GATEWAY_BIND 指定网卡 IP）。
 
 name: dsh-timesheet-gateway
 
@@ -23,9 +23,10 @@ services:
     networks:
       - dsh-shared
     restart: unless-stopped
-    # ports:
-    #   - "127.0.0.1:3090:3090"
+    ports:
+      - "${GATEWAY_BIND:-0.0.0.0}:3090:3090"
 
 networks:
   dsh-shared:
     external: true
+
