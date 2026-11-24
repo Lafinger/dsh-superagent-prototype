@@ -115,6 +115,29 @@ async function allocatePort() {
   }
 }
 
+// ---------- 飞书群配置 ----------
+/** 实例启动后把项目群写进 source:feishu 的 chats（幂等）。 */
+async function configureFeishuChat(project, chatId, listen) {
+  const settingsRes = await call(project, '/orchestrator/api/settings')
+  if (!settingsRes.ok) throw new Error(`读取设置失败：${settingsRes.status}`)
+  const settings = JSON.parse(settingsRes.text)
+  const source = (settings.sources ?? []).find(item => item.id === 'feishu')
+  if (!source) throw new Error('实例没有飞书来源配置')
+  const value = source.value ?? {}
+  const config = value.config ?? {}
+  const chats = Array.isArray(config.chats) ? [...config.chats] : []
+  if (!chats.some(chat => chat.chatId === chatId)) chats.push({ chatId, listen })
+  const next = { ...value, config: { ...config, chats } }
+  const response = await fetch(`http://${project.host}:${project.port}/orchestrator/api/settings/source:feishu`, {
+    method: 'PUT',
+    headers: { Host: `127.0.0.1:${project.port}`, 'x-orchestrator-request': '1', 'content-type': 'application/json' },
+    body: JSON.stringify({ value: next, revision: source.revision }),
+  })
+  const text = await response.text()
+  if (!response.ok) throw new Error(`写入设置失败：${response.status} ${text.slice(0, 200)}`)
+  return JSON.parse(text)
+}
+
 // ---------- 创建 / 删除 ----------
 async function createProject(input) {
   const id = String(input.name ?? '').trim().toLowerCase()
@@ -188,7 +211,16 @@ async function createProject(input) {
     if (health === 'unhealthy') break
     await new Promise(resolve => setTimeout(resolve, 3000))
   }
-  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown') }
+  const chatId = String(input.chatId ?? '').trim()
+  let chat
+  if (chatId) {
+    try {
+      chat = { configured: true, ...(await configureFeishuChat({ host: id, port }, chatId, String(input.listen ?? 'mentions'))) }
+    } catch (error) {
+      chat = { configured: false, error: String(error?.message ?? error) }
+    }
+  }
+  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), chat }
 }
 
 async function deleteProject(id) {
@@ -257,6 +289,8 @@ pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:200px;font-
 <label>端口（留空自动分配）</label><input name="port" placeholder="3085">
 <label>飞书 App ID</label><input name="appId" required>
 <label>飞书 App Secret</label><input name="appSecret" required type="password">
+<label>飞书项目群 ID（oc_ 开头，可留空，稍后在面板配置）</label><input name="chatId" placeholder="oc_xxxxxxxx">
+<label>群接收模式</label><select name="listen"><option value="mentions">仅 @ 机器人</option><option value="all">接收全部消息</option></select>
 <button type="submit">创建并启动</button>
 </form>
 <pre id="out"></pre>
@@ -353,3 +387,4 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
