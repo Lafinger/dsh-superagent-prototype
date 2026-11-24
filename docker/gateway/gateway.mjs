@@ -412,7 +412,7 @@ async function createProject(input) {
       repository,
       observe: input.observe,
       feishuAllowed: normalizeUsers(input.feishuAllowed),
-      githubAllowed: normalizeUsers(input.githubAllowed).map(user => user.id),
+      githubAllowed: collaborators, // 与协作者合并为同一份名单：既能提需求，也能推 PR
     })
   } catch (error) { settings = { error: String(error?.message ?? error) } }
 
@@ -465,7 +465,7 @@ pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:220px;font-
 <label>显示名</label><input name="displayName" placeholder="知识库项目">
 <label>仓库 owner（默认 lafinger-agent）</label><input name="owner" placeholder="lafinger-agent">
 <label>仓库名（留空 = dsh-&lt;项目名&gt;）</label><input name="repoName" placeholder="dsh-kb2">
-<label>协作者 GitHub 账号（逗号分隔，必填）</label><input name="collaborators" required placeholder="Lafinger,zhengze736">
+<label>GitHub 账号（协作者 + 准入，逗号分隔，必填）</label><input name="collaborators" required placeholder="Lafinger,zhengze736">
 <label>管理岗 open_id（写进 team.yml 的 approver）</label><input name="approverOpenId" placeholder="ou_xxxxxxxx">
 <label>端口（留空自动分配）</label><input name="port" placeholder="3085">
 <label>飞书 App ID</label><input name="appId" required>
@@ -473,7 +473,6 @@ pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:220px;font-
 <label>飞书项目群 ID（oc_ 开头，可留空）</label><input name="chatId" placeholder="oc_xxxxxxxx">
 <label>群接收模式</label><select name="listen"><option value="mentions">仅 @ 机器人</option><option value="all">接收全部消息</option></select>
 <label>准入飞书用户 open_id（逗号分隔，可留空）</label><input name="feishuAllowed" placeholder="ou_xxx,ou_yyy">
-<label>准入 GitHub 账号（逗号分隔，可留空）</label><input name="githubAllowed" placeholder="Lafinger,zhengze736">
 <fieldset><legend>岗位（team.yml 的 roles，按 order 顺序交付）</legend><div id="roles"></div><button type="button" id="addRole">+ 添加岗位</button></fieldset>
 <button type="submit">创建并启动</button>
 </form>
@@ -513,7 +512,7 @@ async function refresh() {
 document.getElementById('create').onsubmit = async event => {
   event.preventDefault()
   const body = Object.fromEntries([...new FormData(event.target)].filter(([, v]) => v !== ''))
-  for (const key of ['feishuAllowed', 'githubAllowed', 'collaborators']) {
+  for (const key of ['feishuAllowed', 'collaborators']) {
     if (body[key]) body[key] = body[key].split(',').map(s => s.trim()).filter(Boolean)
   }
   const roles = [...roleBox.querySelectorAll('.role')].map(row => ({ key: row.querySelector('[name=roleKey]').value.trim(), name: row.querySelector('[name=roleName]').value.trim(), order: Number(row.querySelector('[name=roleOrder]').value) || undefined, github: row.querySelector('[name=roleGithub]').value.trim(), deliverableDir: row.querySelector('[name=roleDir]').value.trim() })).filter(role => role.key && role.name)
@@ -594,5 +593,6 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
 
 
