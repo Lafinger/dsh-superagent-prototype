@@ -232,13 +232,79 @@ async function ensureCollaborators(repository, logins, token, permission = 'push
   return results
 }
 
+// ---------- GitHub 仓库创建与 team.yml ----------
+let cachedLogin
+async function tokenLogin(token) {
+  if (cachedLogin) return cachedLogin
+  const user = await githubApi('/user', 'GET', undefined, token)
+  cachedLogin = String(user.login ?? '')
+  return cachedLogin
+}
+
+/** 仓库不存在就建（默认私有 + 初始化 README）；已存在则复用。 */
+async function ensureRepository(full, options, token) {
+  try {
+    await githubApi(`/repos/${full}`, 'GET', undefined, token)
+    return { full, created: false }
+  } catch (error) {
+    if (error?.status !== 404) throw error
+  }
+  const [owner, name] = full.split('/')
+  const me = await tokenLogin(token)
+  const mine = owner.toLowerCase() === me.toLowerCase()
+  const body = { name, private: options.private !== false, auto_init: true }
+  const created = mine
+    ? await githubApi('/user/repos', 'POST', body, token)
+    : await githubApi(`/orgs/${owner}/repos`, 'POST', body, token)
+  return { full: created.full_name ?? full, created: true }
+}
+
+/** 新建仓库后写入 settings/team.yml：approver + 两个岗位，岗位 github 复用 collaborators。 */
+async function writeTeamFile(repository, spec, token) {
+  const [first, second = first] = spec.collaborators
+  const yaml = [
+    '# 由 dsh 网关在创建项目时生成。approver 对接客户，roles 按 order 顺序交付。',
+    'approver:',
+    `  name: ${spec.approverName}`,
+    `  feishu_open_id: ${spec.approverOpenId}`,
+    `  feishu_name: ${spec.approverName}`,
+    `  github: ${first}`,
+    '',
+    'roles:',
+    '  - key: design',
+    '    name: 设计岗',
+    '    order: 1',
+    '    feishu_open_id: ',
+    '    feishu_name: 设计岗',
+    `    github: ${first}`,
+    '    deliverable_dir: design/',
+    '',
+    '  - key: implement',
+    '    name: 实施岗',
+    '    order: 2',
+    '    feishu_open_id: ',
+    '    feishu_name: 实施岗',
+    `    github: ${second}`,
+    '    deliverable_dir: app/',
+    '',
+  ].join('\n')
+  return githubApi(`/repos/${repository}/contents/settings/team.yml`, 'PUT', {
+    message: 'chore: add team.yml for the dsh project',
+    content: Buffer.from(yaml, 'utf8').toString('base64'),
+  }, token)
+}
+
 // ---------- 创建 / 删除 ----------
 async function createProject(input) {
   const id = String(input.name ?? '').trim().toLowerCase()
   if (!/^[a-z0-9][a-z0-9-]*$/.test(id)) throw Object.assign(new Error('项目名只能用小写字母、数字和连字符'), { status: 400 })
   if (findProject(id)) throw Object.assign(new Error(`项目已存在：${id}`), { status: 409 })
-  const repository = String(input.repository ?? '').trim()
+  const owner = String(input.owner ?? 'lafinger-agent').trim()
+  const repoName = String(input.repoName ?? `dsh-${id}`).trim()
+  const repository = String(input.repository ?? `${owner}/${repoName}`).trim()
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw Object.assign(new Error('repository 需要 owner/repo 形式'), { status: 400 })
+  const collaborators = normalizeUsers(input.collaborators).map(user => user.id)
+  if (!collaborators.length) throw Object.assign(new Error('collaborators 至少填一个（工人用各自账号推 PR）'), { status: 400 })
   const appId = String(input.appId ?? '').trim()
   const appSecret = String(input.appSecret ?? '').trim()
   if (!appId || !appSecret) throw Object.assign(new Error('需要飞书 App ID 与 App Secret'), { status: 400 })
@@ -248,6 +314,15 @@ async function createProject(input) {
 
   const image = String(input.image ?? DEFAULT_IMAGE)
   const defaults = readDefaults()
+  const token = defaults.GH_TOKEN
+  const repo = input.createRepo === false ? { full: repository, created: false } : await ensureRepository(repository, {}, token)
+  if (repo.created) {
+    await writeTeamFile(repo.full, {
+      approverOpenId: String(input.approverOpenId ?? ''),
+      approverName: String(input.approverName ?? '管理岗'),
+      collaborators,
+    }, token)
+  }
   const env = {
     ...defaults,
     DSH_HOME: '/root/.dsh',
@@ -316,14 +391,8 @@ async function createProject(input) {
   } catch (error) { settings = { error: String(error?.message ?? error) } }
 
   const team = await checkTeamFile(repository, defaults.GH_TOKEN)
-  const requested = Array.isArray(input.collaborators) ? input.collaborators.map(String) : []
-  const fromTeam = requested.length ? [] : await teamLogins(repository, defaults.GH_TOKEN)
-  const logins = [...new Set([...requested, ...fromTeam, ...normalizeUsers(input.githubAllowed).map(user => user.id)])]
-    .filter(login => login && defaults.GH_TOKEN)
-  const collaborators = logins.length
-    ? await ensureCollaborators(repository, logins, defaults.GH_TOKEN, String(input.collaboratorPermission ?? 'push'))
-    : []
-  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), settings, team, collaborators }
+  const collaboratorsResult = await ensureCollaborators(repository, collaborators, token, String(input.collaboratorPermission ?? 'push'))
+  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), repo, settings, team, collaborators: collaboratorsResult }
 }
 
 async function deleteProject(id) {
@@ -368,7 +437,10 @@ pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:220px;font-
 <form id="create"><strong>新建项目</strong>
 <label>项目名（小写字母/数字/连字符）</label><input name="name" required placeholder="kb2">
 <label>显示名</label><input name="displayName" placeholder="知识库项目">
-<label>GitHub 仓库（owner/repo）</label><input name="repository" required placeholder="lafinger-agent/kb2-demo">
+<label>仓库 owner（默认 lafinger-agent）</label><input name="owner" placeholder="lafinger-agent">
+<label>仓库名（留空 = dsh-&lt;项目名&gt;）</label><input name="repoName" placeholder="dsh-kb2">
+<label>协作者 GitHub 账号（逗号分隔，必填）</label><input name="collaborators" required placeholder="Lafinger,zhengze736">
+<label>管理岗 open_id（写进 team.yml 的 approver）</label><input name="approverOpenId" placeholder="ou_xxxxxxxx">
 <label>端口（留空自动分配）</label><input name="port" placeholder="3085">
 <label>飞书 App ID</label><input name="appId" required>
 <label>飞书 App Secret</label><input name="appSecret" required type="password">
@@ -399,7 +471,7 @@ async function refresh() {
 document.getElementById('create').onsubmit = async event => {
   event.preventDefault()
   const body = Object.fromEntries([...new FormData(event.target)].filter(([, v]) => v !== ''))
-  for (const key of ['feishuAllowed', 'githubAllowed']) {
+  for (const key of ['feishuAllowed', 'githubAllowed', 'collaborators']) {
     if (body[key]) body[key] = body[key].split(',').map(s => s.trim()).filter(Boolean)
   }
   log('创建中…（启动 + 配置约 1–2 分钟）')
@@ -478,3 +550,4 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
