@@ -1,5 +1,10 @@
 {
   "projects": [
-    { "id": "metahuman", "name": "数字人 POC", "host": "metahuman", "port": 3084 }
+    {
+      "id": "metahuman",
+      "name": "数字人 POC",
+      "host": "metahuman",
+      "port": 3084
+    }
   ]
 }
