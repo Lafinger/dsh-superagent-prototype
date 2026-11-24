@@ -281,7 +281,7 @@ function teamYaml(spec) {
   const lines = [
     '# 由 dsh 网关在创建项目时生成。approver 对接客户；roles 按 order 顺序交付。',
     'approver:',
-    `  name: ${spec.approver.name}`,
+    `  name: ${spec.approver.name || '管理岗'}`,
     `  feishu_open_id: ${spec.approver.openId ?? ''}`,
     `  feishu_name: ${spec.approver.person ?? spec.approver.name}`,
     `  github: ${spec.approver.github ?? ''}`,
@@ -340,7 +340,7 @@ async function feishuMembers(appId, appSecret, chatId) {
 function teamSpecFrom(input, collaborators) {
   if (!input.team) return undefined
   const approver = {
-    name: String(input.approverName ?? input.team.approver?.name ?? '管理岗'),
+    name: String(input.team?.approver?.name || input.approverName || '管理岗'),
     person: String(input.team.approver?.person ?? ''),
     openId: String(input.approverOpenId ?? input.team.approver?.openId ?? ''),
     github: String(input.team.approver?.github ?? collaborators[0] ?? ''),
@@ -611,7 +611,6 @@ pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px;font-size:12
 
     <fieldset><legend>审批人（管理岗）</legend>
       <div class="grid2">
-        <div><label>名字</label><input name="approverName" value="管理岗"></div>
         <div><label>从群成员选择</label><select id="approverPick"><option value="">（手工填 open_id）</option></select></div>
         <div><label>open_id</label><input name="approverOpenId" placeholder="ou_xxxxxxxx"><input type="hidden" name="approverPerson"></div>
         <div><label>GitHub 账号</label><input name="approverGithub" placeholder="Lafinger"></div>
@@ -727,7 +726,7 @@ document.getElementById('create').onsubmit = async function (event) {
     }
     if (role.key && role.name) roles.push(role)
   }
-  var approver = { name: body.approverName || '管理岗', person: body.approverPerson || '', openId: body.approverOpenId || '', github: body.approverGithub || '' }
+  var approver = { name: '管理岗', person: body.approverPerson || '', openId: body.approverOpenId || '', github: body.approverGithub || '' }
   body.team = { approver: approver, roles: roles }
   delete body.approverName; delete body.approverOpenId; delete body.approverGithub; delete body.approverPerson
   var allowed = approver.openId ? [approver.openId] : []
