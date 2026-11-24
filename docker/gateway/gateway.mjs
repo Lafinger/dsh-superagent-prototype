@@ -199,14 +199,24 @@ function normalizeUsers(input) {
 // ---------- GitHub 仓库协作 ----------
 async function githubApi(path, method, body, token) {
   if (!token) throw new Error('GH_TOKEN 为空')
-  const response = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'dsh-gateway' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
-  const text = await response.text()
-  if (!response.ok) throw Object.assign(new Error(`github ${response.status}: ${text.slice(0, 200)}`), { status: response.status })
-  return text ? JSON.parse(text) : {}
+  let lastError
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await fetch(`https://api.github.com${path}`, {
+        method,
+        headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'dsh-gateway' },
+        body: body ? JSON.stringify(body) : undefined,
+      })
+      const text = await response.text()
+      if (!response.ok) throw Object.assign(new Error(`github ${response.status}: ${text.slice(0, 200)}`), { status: response.status })
+      return text ? JSON.parse(text) : {}
+    } catch (error) {
+      lastError = error
+      if (error?.status && error.status < 500) throw error
+      await new Promise(resolve => setTimeout(resolve, 500 * (attempt + 1)))
+    }
+  }
+  throw lastError
 }
 
 /** 从仓库的 settings/team.yml 读每个岗位的 github 账号（工人用它推 PR）。 */
@@ -260,37 +270,37 @@ async function ensureRepository(full, options, token) {
 }
 
 /** 新建仓库后写入 settings/team.yml：approver + 两个岗位，岗位 github 复用 collaborators。 */
-async function writeTeamFile(repository, spec, token) {
-  const [first, second = first] = spec.collaborators
-  const yaml = [
-    '# 由 dsh 网关在创建项目时生成。approver 对接客户，roles 按 order 顺序交付。',
+/** 生成 settings/team.yml：approver + 任意数量岗位（面板可配）。 */
+function teamYaml(spec) {
+  const lines = [
+    '# 由 dsh 网关在创建项目时生成。approver 对接客户；roles 按 order 顺序交付。',
     'approver:',
-    `  name: ${spec.approverName}`,
-    `  feishu_open_id: ${spec.approverOpenId}`,
-    `  feishu_name: ${spec.approverName}`,
-    `  github: ${first}`,
+    `  name: ${spec.approver.name}`,
+    `  feishu_open_id: ${spec.approver.openId ?? ''}`,
+    `  feishu_name: ${spec.approver.name}`,
+    `  github: ${spec.approver.github ?? ''}`,
     '',
     'roles:',
-    '  - key: design',
-    '    name: 设计岗',
-    '    order: 1',
-    '    feishu_open_id: ',
-    '    feishu_name: 设计岗',
-    `    github: ${first}`,
-    '    deliverable_dir: design/',
-    '',
-    '  - key: implement',
-    '    name: 实施岗',
-    '    order: 2',
-    '    feishu_open_id: ',
-    '    feishu_name: 实施岗',
-    `    github: ${second}`,
-    '    deliverable_dir: app/',
-    '',
-  ].join('\n')
+  ]
+  for (const role of spec.roles) {
+    lines.push(
+      `  - key: ${role.key}`,
+      `    name: ${role.name}`,
+      `    order: ${role.order}`,
+      `    feishu_open_id: ${role.openId ?? ''}`,
+      `    feishu_name: ${role.name}`,
+      `    github: ${role.github ?? ''}`,
+    )
+    if (role.deliverableDir) lines.push(`    deliverable_dir: ${role.deliverableDir}`)
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+async function writeTeamFile(repository, spec, token) {
   return githubApi(`/repos/${repository}/contents/settings/team.yml`, 'PUT', {
     message: 'chore: add team.yml for the dsh project',
-    content: Buffer.from(yaml, 'utf8').toString('base64'),
+    content: Buffer.from(teamYaml(spec), 'utf8').toString('base64'),
   }, token)
 }
 
@@ -316,13 +326,29 @@ async function createProject(input) {
   const defaults = readDefaults()
   const token = defaults.GH_TOKEN
   const repo = input.createRepo === false ? { full: repository, created: false } : await ensureRepository(repository, {}, token)
-  if (repo.created) {
-    await writeTeamFile(repo.full, {
-      approverOpenId: String(input.approverOpenId ?? ''),
-      approverName: String(input.approverName ?? '管理岗'),
-      collaborators,
-    }, token)
+  const teamSpec = {
+    approver: {
+      name: String(input.approverName ?? input.team?.approver?.name ?? '管理岗'),
+      openId: String(input.approverOpenId ?? input.team?.approver?.openId ?? ''),
+      github: String(input.team?.approver?.github ?? collaborators[0] ?? ''),
+    },
+    roles: Array.isArray(input.team?.roles) && input.team.roles.length
+      ? input.team.roles.map((role, index) => ({
+          key: String(role.key ?? `role-${index + 1}`),
+          name: String(role.name ?? `岗位${index + 1}`),
+          order: Number(role.order ?? index + 1),
+          openId: String(role.openId ?? ''),
+          github: String(role.github ?? collaborators[index] ?? collaborators[0] ?? ''),
+          deliverableDir: String(role.deliverableDir ?? ''),
+        }))
+      : [
+          { key: 'design', name: '设计岗', order: 1, openId: '', github: collaborators[0] ?? '', deliverableDir: 'design/' },
+          { key: 'implement', name: '实施岗', order: 2, openId: '', github: collaborators[1] ?? collaborators[0] ?? '', deliverableDir: 'app/' },
+        ],
   }
+  const keys = new Set(teamSpec.roles.map(role => role.key))
+  if (keys.size !== teamSpec.roles.length) throw Object.assign(new Error('岗位 key 不能重复'), { status: 400 })
+  if (repo.created) await writeTeamFile(repo.full, teamSpec, token)
   const env = {
     ...defaults,
     DSH_HOME: '/root/.dsh',
@@ -392,7 +418,7 @@ async function createProject(input) {
 
   const team = await checkTeamFile(repository, defaults.GH_TOKEN)
   const collaboratorsResult = await ensureCollaborators(repository, collaborators, token, String(input.collaboratorPermission ?? 'push'))
-  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), repo, settings, team, collaborators: collaboratorsResult }
+  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), repo, settings, team: { ...team, roles: teamSpec.roles.length }, collaborators: collaboratorsResult }
 }
 
 async function deleteProject(id) {
@@ -448,11 +474,27 @@ pre{background:#111;color:#ddd;padding:10px;overflow:auto;max-height:220px;font-
 <label>群接收模式</label><select name="listen"><option value="mentions">仅 @ 机器人</option><option value="all">接收全部消息</option></select>
 <label>准入飞书用户 open_id（逗号分隔，可留空）</label><input name="feishuAllowed" placeholder="ou_xxx,ou_yyy">
 <label>准入 GitHub 账号（逗号分隔，可留空）</label><input name="githubAllowed" placeholder="Lafinger,zhengze736">
+<fieldset><legend>岗位（team.yml 的 roles，按 order 顺序交付）</legend><div id="roles"></div><button type="button" id="addRole">+ 添加岗位</button></fieldset>
 <button type="submit">创建并启动</button>
 </form>
 <pre id="out"></pre>
 <script>
 const rows = document.getElementById('rows'), out = document.getElementById('out')
+const roleBox = document.getElementById('roles')
+function addRole(values) {
+  const row = document.createElement('div')
+  row.className = 'role'
+  row.innerHTML = '<input name="roleKey" placeholder="key 如 design" style="width:16%">' +
+    '<input name="roleName" placeholder="岗位名" style="width:22%">' +
+    '<input name="roleOrder" placeholder="顺序" style="width:10%">' +
+    '<input name="roleGithub" placeholder="GitHub 账号" style="width:24%">' +
+    '<input name="roleDir" placeholder="目录 如 design/" style="width:24%">'
+  for (const input of row.querySelectorAll('input')) input.value = (values && values[input.name]) || ''
+  roleBox.appendChild(row)
+}
+document.getElementById('addRole').onclick = () => addRole({})
+addRole({ roleKey: 'design', roleName: '设计岗', roleOrder: '1', roleDir: 'design/' })
+addRole({ roleKey: 'implement', roleName: '实施岗', roleOrder: '2', roleDir: 'app/' })
 const log = text => { out.textContent = text }
 async function refresh() {
   const list = await fetch('/projects').then(r => r.json())
@@ -474,6 +516,8 @@ document.getElementById('create').onsubmit = async event => {
   for (const key of ['feishuAllowed', 'githubAllowed', 'collaborators']) {
     if (body[key]) body[key] = body[key].split(',').map(s => s.trim()).filter(Boolean)
   }
+  const roles = [...roleBox.querySelectorAll('.role')].map(row => ({ key: row.querySelector('[name=roleKey]').value.trim(), name: row.querySelector('[name=roleName]').value.trim(), order: Number(row.querySelector('[name=roleOrder]').value) || undefined, github: row.querySelector('[name=roleGithub]').value.trim(), deliverableDir: row.querySelector('[name=roleDir]').value.trim() })).filter(role => role.key && role.name)
+  if (roles.length) body.team = { approver: { name: '管理岗', openId: body.approverOpenId || '' }, roles }
   log('创建中…（启动 + 配置约 1–2 分钟）')
   const response = await fetch('/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   log(await response.text())
@@ -550,4 +594,5 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
 
