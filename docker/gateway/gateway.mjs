@@ -283,7 +283,7 @@ function teamYaml(spec) {
     'approver:',
     `  name: ${spec.approver.name}`,
     `  feishu_open_id: ${spec.approver.openId ?? ''}`,
-    `  feishu_name: ${spec.approver.name}`,
+    `  feishu_name: ${spec.approver.person ?? spec.approver.name}`,
     `  github: ${spec.approver.github ?? ''}`,
     '',
     'roles:',
@@ -294,7 +294,7 @@ function teamYaml(spec) {
       `    name: ${role.name}`,
       `    order: ${role.order}`,
       `    feishu_open_id: ${role.openId ?? ''}`,
-      `    feishu_name: ${role.name}`,
+      `    feishu_name: ${role.person ?? role.name}`,
       `    github: ${role.github ?? ''}`,
     )
     if (role.deliverableDir) lines.push(`    deliverable_dir: ${role.deliverableDir}`)
@@ -304,9 +304,16 @@ function teamYaml(spec) {
 }
 
 async function writeTeamFile(repository, spec, token) {
+  // 文件已存在时必须带 sha，否则 GitHub 返回 422。
+  let sha
+  try {
+    const existing = await githubApi(`/repos/${repository}/contents/settings/team.yml`, 'GET', undefined, token)
+    sha = existing.sha
+  } catch { /* 不存在就新建 */ }
   return githubApi(`/repos/${repository}/contents/settings/team.yml`, 'PUT', {
-    message: 'chore: add team.yml for the dsh project',
+    message: sha ? 'chore: update team.yml for the dsh project' : 'chore: add team.yml for the dsh project',
     content: Buffer.from(teamYaml(spec), 'utf8').toString('base64'),
+    ...(sha ? { sha } : {}),
   }, token)
 }
 
@@ -334,11 +341,13 @@ function teamSpecFrom(input, collaborators) {
   if (!input.team) return undefined
   const approver = {
     name: String(input.approverName ?? input.team.approver?.name ?? '管理岗'),
+    person: String(input.team.approver?.person ?? ''),
     openId: String(input.approverOpenId ?? input.team.approver?.openId ?? ''),
     github: String(input.team.approver?.github ?? collaborators[0] ?? ''),
   }
   const roles = (Array.isArray(input.team.roles) ? input.team.roles : []).map((role, index) => ({
     key: String(role.key ?? `role-${index + 1}`),
+    person: String(role.person ?? ''),
     name: String(role.name ?? `岗位${index + 1}`),
     order: Number(role.order ?? index + 1),
     openId: String(role.openId ?? ''),
@@ -604,7 +613,7 @@ pre{background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px;font-size:12
       <div class="grid2">
         <div><label>名字</label><input name="approverName" value="管理岗"></div>
         <div><label>从群成员选择</label><select id="approverPick"><option value="">（手工填 open_id）</option></select></div>
-        <div><label>open_id</label><input name="approverOpenId" placeholder="ou_xxxxxxxx"></div>
+        <div><label>open_id</label><input name="approverOpenId" placeholder="ou_xxxxxxxx"><input type="hidden" name="approverPerson"></div>
         <div><label>GitHub 账号</label><input name="approverGithub" placeholder="Lafinger"></div>
       </div>
     </fieldset>
@@ -642,19 +651,25 @@ function addRole(values) {
     '<td><input name="roleKey" placeholder="design"></td>' +
     '<td><input name="roleName" placeholder="设计岗"></td>' +
     '<td><input name="roleOrder" placeholder="1" style="width:56px"></td>' +
-    '<td><input name="roleOpenId" placeholder="ou_…"></td>' +
+    '<td><input name="roleOpenId" placeholder="ou_…"><input type="hidden" name="rolePerson"></td>' +
     '<td><input name="roleGithub" placeholder="Lafinger"></td>' +
     '<td><input name="roleDir" placeholder="design/"></td>' +
     '<td><button type="button" class="danger">删除</button></td>'
   roleBox.appendChild(row)
-  var pick = row.querySelector('.roleMember'), open = row.querySelector('[name=roleOpenId]')
-  pick.onchange = function () { if (pick.value) open.value = pick.value }
+  var pick = row.querySelector('.roleMember'), open = row.querySelector('[name=roleOpenId]'), person = row.querySelector('[name=rolePerson]')
+  pick.onchange = function () {
+    if (!pick.value) return
+    open.value = pick.value
+    person.value = pick.options[pick.selectedIndex].textContent
+  }
   row.querySelector('button').onclick = function () { row.remove() }
   if (values) for (var key in values) { var input = row.querySelector('[name=' + key + ']'); if (input) input.value = values[key] }
 }
 document.getElementById('addRole').onclick = function () { addRole({}) }
 document.getElementById('approverPick').onchange = function () {
-  if (this.value) document.querySelector('[name=approverOpenId]').value = this.value
+  if (!this.value) return
+  document.querySelector('[name=approverOpenId]').value = this.value
+  document.querySelector('[name=approverPerson]').value = this.options[this.selectedIndex].textContent
 }
 document.getElementById('loadMembers').onclick = async function () {
   var form = document.getElementById('create')
@@ -706,14 +721,15 @@ document.getElementById('create').onsubmit = async function (event) {
       name: row.querySelector('[name=roleName]').value.trim(),
       order: Number(row.querySelector('[name=roleOrder]').value) || undefined,
       openId: row.querySelector('[name=roleOpenId]').value.trim(),
+      person: row.querySelector('[name=rolePerson]').value.trim(),
       github: row.querySelector('[name=roleGithub]').value.trim(),
       deliverableDir: row.querySelector('[name=roleDir]').value.trim(),
     }
     if (role.key && role.name) roles.push(role)
   }
-  var approver = { name: body.approverName || '管理岗', openId: body.approverOpenId || '', github: body.approverGithub || '' }
+  var approver = { name: body.approverName || '管理岗', person: body.approverPerson || '', openId: body.approverOpenId || '', github: body.approverGithub || '' }
   body.team = { approver: approver, roles: roles }
-  delete body.approverName; delete body.approverOpenId; delete body.approverGithub
+  delete body.approverName; delete body.approverOpenId; delete body.approverGithub; delete body.approverPerson
   var allowed = approver.openId ? [approver.openId] : []
   for (var j = 0; j < roles.length; j++) if (roles[j].openId) allowed.push(roles[j].openId)
   if (allowed.length) body.feishuAllowed = allowed
