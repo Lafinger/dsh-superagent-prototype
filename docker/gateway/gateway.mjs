@@ -196,6 +196,42 @@ function normalizeUsers(input) {
     .filter(item => item.id)
 }
 
+// ---------- GitHub 仓库协作 ----------
+async function githubApi(path, method, body, token) {
+  if (!token) throw new Error('GH_TOKEN 为空')
+  const response = await fetch(`https://api.github.com${path}`, {
+    method,
+    headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'dsh-gateway' },
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const text = await response.text()
+  if (!response.ok) throw Object.assign(new Error(`github ${response.status}: ${text.slice(0, 200)}`), { status: response.status })
+  return text ? JSON.parse(text) : {}
+}
+
+/** 从仓库的 settings/team.yml 读每个岗位的 github 账号（工人用它推 PR）。 */
+async function teamLogins(repository, token) {
+  try {
+    const file = await githubApi(`/repos/${repository}/contents/settings/team.yml`, 'GET', undefined, token)
+    const text = Buffer.from(String(file.content ?? ''), 'base64').toString('utf8')
+    return [...new Set(text.split(/\r?\n/).map(line => line.match(/^\s*github:\s*(\S+)/)?.[1]).filter(Boolean))]
+  } catch { return [] }
+}
+
+/** 幂等添加协作者（默认 push 权限）。 */
+async function ensureCollaborators(repository, logins, token, permission = 'push') {
+  const results = []
+  for (const login of logins) {
+    try {
+      await githubApi(`/repos/${repository}/collaborators/${encodeURIComponent(login)}`, 'PUT', { permission }, token)
+      results.push({ login, ok: true, permission })
+    } catch (error) {
+      results.push({ login, ok: false, error: String(error?.message ?? error) })
+    }
+  }
+  return results
+}
+
 // ---------- 创建 / 删除 ----------
 async function createProject(input) {
   const id = String(input.name ?? '').trim().toLowerCase()
@@ -280,7 +316,14 @@ async function createProject(input) {
   } catch (error) { settings = { error: String(error?.message ?? error) } }
 
   const team = await checkTeamFile(repository, defaults.GH_TOKEN)
-  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), settings, team }
+  const requested = Array.isArray(input.collaborators) ? input.collaborators.map(String) : []
+  const fromTeam = requested.length ? [] : await teamLogins(repository, defaults.GH_TOKEN)
+  const logins = [...new Set([...requested, ...fromTeam, ...normalizeUsers(input.githubAllowed).map(user => user.id)])]
+    .filter(login => login && defaults.GH_TOKEN)
+  const collaborators = logins.length
+    ? await ensureCollaborators(repository, logins, defaults.GH_TOKEN, String(input.collaboratorPermission ?? 'push'))
+    : []
+  return { id, port, image, state: state?.Health?.Status ?? (state?.Running ? 'running' : 'unknown'), settings, team, collaborators }
 }
 
 async function deleteProject(id) {
@@ -417,6 +460,14 @@ const server = createServer(async (req, res) => {
         } catch (error) { errors.push({ id: project.id, status: 500, error: String(error?.message ?? error) }) }
       }))
       return json(res, 200, { projects: rows.sort((a, b) => a.id.localeCompare(b.id)), errors })
+    }
+    if (url.pathname === '/repos/collaborators' && req.method === 'POST') {
+      const body = await readBody(req)
+      const repository = String(body.repository ?? '')
+      if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) return json(res, 400, { error: 'repository 需要 owner/repo 形式' })
+      const logins = normalizeUsers(body.logins).map(user => user.id)
+      const token = readDefaults().GH_TOKEN
+      return json(res, 200, { repository, results: await ensureCollaborators(repository, logins, token, String(body.permission ?? 'push')) })
     }
     return json(res, 404, { error: 'not found' })
   } catch (error) {
