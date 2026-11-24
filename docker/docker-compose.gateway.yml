@@ -1,6 +1,6 @@
 # 工时聚合 + 项目控制面网关。
 #
-# 局域网访问：默认绑定 0.0.0.0:3090（可用 GATEWAY_BIND 指定网卡 IP）。
+# 局域网访问：默认只绑定内网网卡 192.168.2.170:3090（本机也从该地址访问）。
 
 name: dsh-timesheet-gateway
 
@@ -24,7 +24,7 @@ services:
       - dsh-shared
     restart: unless-stopped
     ports:
-      - "${GATEWAY_BIND:-0.0.0.0}:3090:3090"
+      - "${GATEWAY_BIND:-192.168.2.170}:3090:3090"
 
 networks:
   dsh-shared:
