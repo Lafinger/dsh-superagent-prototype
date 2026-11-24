@@ -230,13 +230,19 @@ async function teamLogins(repository, token) {
 
 /** 幂等添加协作者（默认 push 权限）。 */
 async function ensureCollaborators(repository, logins, token, permission = 'push') {
+  let existing = new Set()
+  try {
+    const list = await githubApi(`/repos/${repository}/collaborators`, 'GET', undefined, token)
+    existing = new Set((Array.isArray(list) ? list : []).map(item => String(item.login ?? '').toLowerCase()))
+  } catch { /* 读不到就当作都不存在 */ }
   const results = []
   for (const login of logins) {
+    const existed = existing.has(String(login).toLowerCase())
     try {
       await githubApi(`/repos/${repository}/collaborators/${encodeURIComponent(login)}`, 'PUT', { permission }, token)
-      results.push({ login, ok: true, permission })
+      results.push({ login, ok: true, permission, existed })
     } catch (error) {
-      results.push({ login, ok: false, error: String(error?.message ?? error) })
+      results.push({ login, ok: false, existed, error: String(error?.message ?? error) })
     }
   }
   return results
@@ -323,6 +329,87 @@ async function feishuMembers(appId, appSecret, chatId) {
   return (body.data?.items ?? []).map(item => ({ openId: item.member_id, name: item.name }))
 }
 
+/** 从请求里取团队规格；没给 team 时返回 undefined（调用方决定用默认值还是跳过）。 */
+function teamSpecFrom(input, collaborators) {
+  if (!input.team) return undefined
+  const approver = {
+    name: String(input.approverName ?? input.team.approver?.name ?? '管理岗'),
+    openId: String(input.approverOpenId ?? input.team.approver?.openId ?? ''),
+    github: String(input.team.approver?.github ?? collaborators[0] ?? ''),
+  }
+  const roles = (Array.isArray(input.team.roles) ? input.team.roles : []).map((role, index) => ({
+    key: String(role.key ?? `role-${index + 1}`),
+    name: String(role.name ?? `岗位${index + 1}`),
+    order: Number(role.order ?? index + 1),
+    openId: String(role.openId ?? ''),
+    github: String(role.github ?? collaborators[index] ?? collaborators[0] ?? ''),
+    deliverableDir: String(role.deliverableDir ?? ''),
+  }))
+  if (!roles.length) return undefined
+  if (new Set(roles.map(role => role.key)).size !== roles.length) throw Object.assign(new Error('岗位 key 不能重复'), { status: 400 })
+  return { approver, roles }
+}
+
+function defaultTeamSpec(collaborators) {
+  return {
+    approver: { name: '管理岗', openId: '', github: collaborators[0] ?? '' },
+    roles: [
+      { key: 'design', name: '设计岗', order: 1, openId: '', github: collaborators[0] ?? '', deliverableDir: 'design/' },
+      { key: 'implement', name: '实施岗', order: 2, openId: '', github: collaborators[1] ?? collaborators[0] ?? '', deliverableDir: 'app/' },
+    ],
+  }
+}
+
+/** 已存在项目的配置对齐：只写有变化的块，不碰容器与数据。 */
+async function reconcileProject(project, spec) {
+  const settings = await readSettings(project)
+  const report = {}
+  const feishu = sourceOf(settings, 'feishu')
+  if (feishu) {
+    const config = { ...(feishu.value?.config ?? {}) }
+    if (!config.cli) config.cli = '/root/.local/bin/lark-bot'
+    const chats = Array.isArray(config.chats) ? [...config.chats] : []
+    for (const chat of spec.chats ?? []) if (!chats.some(item => item.chatId === chat.chatId)) chats.push(chat)
+    config.chats = chats
+    if (spec.directMessages !== undefined) config.directMessages = !!spec.directMessages
+    if (spec.otherChats) config.otherChats = spec.otherChats
+    const next = { ...feishu.value, config }
+    if (JSON.stringify(next) === JSON.stringify(feishu.value)) report.feishu = { saved: false, changed: false }
+    else report.feishu = { changed: true, ...(await apiCall(project, 'PUT', '/orchestrator/api/settings/source:feishu', { value: next, revision: feishu.revision })) }
+  }
+  const github = sourceOf(settings, 'github')
+  if (github && spec.repository) {
+    const config = { ...(github.value?.config ?? {}) }
+    if (!config.cli) config.cli = '/root/.local/bin/gh-agent'
+    config.repository = spec.repository
+    if (spec.observe) Object.assign(config, spec.observe)
+    const next = { ...github.value, config }
+    if (JSON.stringify(next) === JSON.stringify(github.value)) report.github = { saved: false, changed: false }
+    else report.github = { changed: true, ...(await apiCall(project, 'PUT', '/orchestrator/api/settings/source:github', { value: next, revision: github.revision })) }
+  }
+  const policy = settings.blocks?.policy
+  if (policy && (spec.feishuAllowed?.length || spec.githubAllowed?.length)) {
+    const value = JSON.parse(JSON.stringify(policy.value ?? {}))
+    const sources = value.sources ?? {}
+    if (spec.feishuAllowed?.length) {
+      const current = sources.feishu ?? {}
+      const allowed = spec.replace ? [] : [...(current.allowed ?? [])]
+      for (const user of spec.feishuAllowed) if (!allowed.some(item => item.id === user.id)) allowed.push(user)
+      sources.feishu = { ...current, allowed }
+    }
+    if (spec.githubAllowed?.length) {
+      const current = sources.github ?? {}
+      const allowed = spec.replace ? [] : [...(current.allowed ?? [])]
+      for (const login of spec.githubAllowed) if (!allowed.some(item => item.id === login)) allowed.push({ id: login })
+      sources.github = { ...current, allowed }
+    }
+    value.sources = sources
+    if (JSON.stringify(value) === JSON.stringify(policy.value)) report.policy = { saved: false, changed: false }
+    else report.policy = { changed: true, ...(await apiCall(project, 'PUT', '/orchestrator/api/settings/policy', { value, revision: policy.revision })) }
+  }
+  return report
+}
+
 // ---------- 创建 / 删除 ----------
 async function createProject(input) {
   const id = String(input.name ?? '').trim().toLowerCase()
@@ -345,28 +432,7 @@ async function createProject(input) {
   const defaults = readDefaults()
   const token = defaults.GH_TOKEN
   const repo = input.createRepo === false ? { full: repository, created: false } : await ensureRepository(repository, {}, token)
-  const teamSpec = {
-    approver: {
-      name: String(input.approverName ?? input.team?.approver?.name ?? '管理岗'),
-      openId: String(input.approverOpenId ?? input.team?.approver?.openId ?? ''),
-      github: String(input.team?.approver?.github ?? collaborators[0] ?? ''),
-    },
-    roles: Array.isArray(input.team?.roles) && input.team.roles.length
-      ? input.team.roles.map((role, index) => ({
-          key: String(role.key ?? `role-${index + 1}`),
-          name: String(role.name ?? `岗位${index + 1}`),
-          order: Number(role.order ?? index + 1),
-          openId: String(role.openId ?? ''),
-          github: String(role.github ?? collaborators[index] ?? collaborators[0] ?? ''),
-          deliverableDir: String(role.deliverableDir ?? ''),
-        }))
-      : [
-          { key: 'design', name: '设计岗', order: 1, openId: '', github: collaborators[0] ?? '', deliverableDir: 'design/' },
-          { key: 'implement', name: '实施岗', order: 2, openId: '', github: collaborators[1] ?? collaborators[0] ?? '', deliverableDir: 'app/' },
-        ],
-  }
-  const keys = new Set(teamSpec.roles.map(role => role.key))
-  if (keys.size !== teamSpec.roles.length) throw Object.assign(new Error('岗位 key 不能重复'), { status: 400 })
+  const teamSpec = teamSpecFrom(input, collaborators) ?? defaultTeamSpec(collaborators)
   if (repo.created) await writeTeamFile(repo.full, teamSpec, token)
   const env = {
     ...defaults,
@@ -687,6 +753,46 @@ const server = createServer(async (req, res) => {
     }
     const statusMatch = url.pathname.match(/^\/projects\/([\w-]+)\/status$/)
     if (statusMatch) return json(res, 200, await statusOf(statusMatch[1]))
+    const reconcileMatch = url.pathname.match(/^\/projects\/([\w-]+)\/reconcile$/)
+    if (reconcileMatch && req.method === 'POST') {
+      const id = reconcileMatch[1]
+      const project = findProject(id)
+      if (!project) return json(res, 404, { error: `未知项目：${id}` })
+      const body = await readBody(req)
+      const defaults = readDefaults()
+      const target = { host: project.host, port: project.port }
+      const current = await readSettings(target)
+      const repository = String(body.repository ?? sourceOf(current, 'github')?.value?.config?.repository ?? '')
+      const collaborators = normalizeUsers(body.collaborators).map(user => user.id)
+      const teamSpec = teamSpecFrom(body, collaborators)
+      let team = await checkTeamFile(repository, defaults.GH_TOKEN)
+      let written = false
+      if (body.writeTeam && teamSpec && repository) {
+        await writeTeamFile(repository, teamSpec, defaults.GH_TOKEN)
+        written = true
+        team = await checkTeamFile(repository, defaults.GH_TOKEN)
+      }
+      const openIds = teamSpec
+        ? [teamSpec.approver.openId, ...teamSpec.roles.map(role => role.openId)].filter(Boolean).map(item => ({ id: item }))
+        : []
+      const settings = await reconcileProject(target, {
+        chats: body.chatId ? [{ chatId: String(body.chatId), listen: body.listen === 'all' ? 'all' : 'mentions' }] : [],
+        directMessages: body.directMessages,
+        otherChats: body.otherChats,
+        repository: repository || undefined,
+        observe: body.observe,
+        feishuAllowed: normalizeUsers(body.feishuAllowed).length ? normalizeUsers(body.feishuAllowed) : openIds,
+        githubAllowed: collaborators,
+        replace: !!body.replace,
+      })
+      const collaboratorResults = collaborators.length && repository
+        ? await ensureCollaborators(repository, collaborators, defaults.GH_TOKEN, String(body.collaboratorPermission ?? 'push'))
+        : []
+      const changed = ['feishu', 'github', 'policy'].filter(key => settings[key]?.changed)
+      if (written) changed.push('team.yml')
+      if (collaboratorResults.some(item => item.ok && !item.existed)) changed.push('collaborators')
+      return json(res, 200, { id, ok: true, changed, team: { ...team, written, roles: teamSpec?.roles.length ?? null }, settings, collaborators: collaboratorResults })
+    }
     const deleteMatch = url.pathname.match(/^\/projects\/([\w-]+)$/)
     if (deleteMatch && req.method === 'DELETE') return json(res, 200, await deleteProject(deleteMatch[1]))
     if (url.pathname === '/timesheet') {
@@ -733,6 +839,8 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
+
 
 
 
