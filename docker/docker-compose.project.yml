@@ -1,0 +1,81 @@
+# 单个项目实例模板：一个项目 = 一个容器 = 一个 profile。
+#
+# 与旧模板的区别：
+#   1. **不发布宿主端口**——工时聚合网关在 dsh-shared 网络上按别名访问它；
+#   2. 加入外部网络 dsh-shared，并带别名 ${PROJECT_ALIAS}；
+#   3. 容器内的 panel-forward 会把 <容器IP>:<端口> 转发到 127.0.0.1:<端口>，
+#      网关因此能在不改实例配置的情况下访问它的管理 API。
+#
+# 用法：本文件由 new-project.ps1 复制到 docker/dsh-superagent-<项目>/docker-compose.yml，
+# 与该目录下的 .env 一起使用：
+#   cd docker/dsh-superagent-<项目> && docker compose up -d --build
+
+name: dsh-superagent-${SUPERAGENT_PROFILE}
+
+services:
+  dsh-superagent:
+    build:
+      context: ..
+      args:
+        SUPERAGENT_REPO: ${SUPERAGENT_REPO:-https://github.com/Lafinger/dsh-superagent-prototype.git}
+        SUPERAGENT_REF: ${SUPERAGENT_REF:?set SUPERAGENT_REF to a main commit}
+        DSH_VERSION: ${DSH_VERSION:-0.2.1-rc.3}
+        LARK_CLI_VERSION: ${LARK_CLI_VERSION:-1.0.90}
+        GH_VERSION: ${GH_VERSION:-2.103.3}
+    image: dsh-superagent-project:${SUPERAGENT_REF}
+    env_file:
+      - .env
+    restart: unless-stopped
+    init: false
+    environment:
+      DSH_HOME: /root/.dsh
+      STATE_DIR: /root/.dsh/superagent-state
+      LARKSUITE_CLI_CONFIG_DIR: /root/.lark-cli-dsh-superagent
+      GH_CONFIG_DIR: /root/.gh-agent
+      SUPERAGENT_PROFILE: ${SUPERAGENT_PROFILE}
+      SUPERAGENT_PORT: ${SUPERAGENT_PORT}
+      TZ: ${TZ:-Asia/Shanghai}
+      LARK_APP_ID: ${LARK_APP_ID:-}
+      LARK_APP_SECRET: ${LARK_APP_SECRET:-}
+      GH_TOKEN: ${GH_TOKEN:-}
+      GH_USER: ${GH_USER:-}
+      GITHUB_REPOSITORY: ${GITHUB_REPOSITORY:-}
+      MODEL_PROVIDER: ${MODEL_PROVIDER:-linkcode}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-https://direct.linkcode.site/v1}
+      MODEL_NAME: ${MODEL_NAME:-deepseek-v4.1-flash-1017}
+      MODEL_APIKEY_ENV: ${MODEL_APIKEY_ENV:-LINKCODE_API_KEY}
+      LINKCODE_API_KEY: ${LINKCODE_API_KEY:-}
+      CPA_API_KEY: ${CPA_API_KEY:-}
+      # 允许网关用别名访问管理 API（Host 白名单）；网关也可发 127.0.0.1:<port>，二者都行
+      DSH_ORCHESTRATOR_TRUSTED_HOSTS: ${PROJECT_ALIAS}:${SUPERAGENT_PORT}
+    # 默认不发布宿主端口；需要本机调试面板时临时取消注释
+    # ports:
+    #   - "127.0.0.1:${SUPERAGENT_PORT}:${SUPERAGENT_PORT}"
+    networks:
+      default:
+      dsh-shared:
+        aliases:
+          - ${PROJECT_ALIAS}
+    volumes:
+      - dsh-home:/root/.dsh
+      - superagent-state:/root/.dsh/superagent-state
+      - lark-config:/root/.lark-cli-dsh-superagent
+      - gh-config:/root/.gh-agent
+    stop_grace_period: 5m
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      start_period: 180s
+      retries: 5
+
+volumes:
+  dsh-home:
+  superagent-state:
+  lark-config:
+  gh-config:
+
+networks:
+  dsh-shared:
+    external: true
+

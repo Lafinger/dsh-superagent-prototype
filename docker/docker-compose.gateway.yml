@@ -1,0 +1,27 @@
+# 工时聚合网关：不发布任何宿主端口，只在 dsh-shared 网络上供其他容器访问。
+#
+#   docker compose -f docker-compose.gateway.yml up -d
+#
+# 宿主机上的前端要访问时，取消下面 ports 的注释（只占一个端口）。
+
+name: dsh-timesheet-gateway
+
+services:
+  gateway:
+    image: node:22-alpine
+    command: ["node", "/app/gateway.mjs"]
+    environment:
+      GATEWAY_PORT: "3090"
+      GATEWAY_TIMEOUT_MS: "${GATEWAY_TIMEOUT_MS:-15000}"
+    volumes:
+      - ./gateway/gateway.mjs:/app/gateway.mjs:ro
+      - ./gateway/projects.json:/app/projects.json:ro
+    networks:
+      - dsh-shared
+    restart: unless-stopped
+    # ports:
+    #   - "127.0.0.1:3090:3090"
+
+networks:
+  dsh-shared:
+    external: true
