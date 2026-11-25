@@ -13,7 +13,7 @@ services:
       GATEWAY_TIMEOUT_MS: "${GATEWAY_TIMEOUT_MS:-15000}"
       GATEWAY_REPO_DIR: /workspace/docker
       GATEWAY_NETWORK: dsh-shared
-      GATEWAY_DEFAULT_IMAGE: "${GATEWAY_DEFAULT_IMAGE:-dsh-collaborationagent:8fb09223df0776e68b09edd0d044df61025d1efa}"
+      GATEWAY_DEFAULT_IMAGE: "${GATEWAY_DEFAULT_IMAGE:-dsh-collaborationagent:05ee9ab9f77304f19b494c71a932a77e55ef47c1}"
     volumes:
       - ./gateway/gateway.mjs:/app/gateway.mjs:ro
       - ./gateway/projects.json:/app/projects.json
@@ -29,5 +29,6 @@ services:
 networks:
   dsh-shared:
     external: true
+
 
 

@@ -23,7 +23,7 @@ const CONFIG = process.env.GATEWAY_PROJECTS || new URL('./projects.json', import
 const DEFAULTS = process.env.GATEWAY_DEFAULTS || new URL('./defaults.env', import.meta.url).pathname
 const REPO_DIR = process.env.GATEWAY_REPO_DIR || '/workspace/docker'
 const NETWORK = process.env.GATEWAY_NETWORK || 'dsh-shared'
-const DEFAULT_IMAGE = process.env.GATEWAY_DEFAULT_IMAGE || 'dsh-collaborationagent:8fb09223df0776e68b09edd0d044df61025d1efa'
+const DEFAULT_IMAGE = process.env.GATEWAY_DEFAULT_IMAGE || 'dsh-collaborationagent:05ee9ab9f77304f19b494c71a932a77e55ef47c1'
 const BASE_PORT = Number(process.env.GATEWAY_BASE_PORT || 3085)
 
 // ---------- 项目清单 ----------
@@ -860,6 +860,7 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, '0.0.0.0', () => {
   console.error(`[timesheet-gateway] listening 0.0.0.0:${PORT}, projects=${projects().map(p => p.id).join(',') || '(none)'}`)
 })
+
 
 
 
