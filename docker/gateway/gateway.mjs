@@ -445,6 +445,12 @@ async function createProject(input) {
   if (repo.created) await writeTeamFile(repo.full, teamSpec, token)
   const env = {
     ...defaults,
+    // 构建参数：没有它们，项目目录里的 docker compose 无法重建
+    SUPERAGENT_REPO: defaults.SUPERAGENT_REPO ?? 'https://github.com/Lafinger/dsh-superagent-prototype.git',
+    SUPERAGENT_REF: defaults.SUPERAGENT_REF ?? (String(image).includes(':') ? String(image).split(':').pop() : 'main'),
+    DSH_VERSION: defaults.DSH_VERSION ?? '0.2.1-rc.3',
+    LARK_CLI_VERSION: defaults.LARK_CLI_VERSION ?? '1.0.90',
+    GH_VERSION: defaults.GH_VERSION ?? '2.103.3',
     DSH_HOME: '/root/.dsh',
     STATE_DIR: '/root/.dsh/superagent-state',
     LARKSUITE_CLI_CONFIG_DIR: '/root/.lark-cli-dsh-superagent',
