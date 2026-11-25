@@ -22,7 +22,7 @@ services:
         DSH_VERSION: ${DSH_VERSION:-0.2.1-rc.3}
         LARK_CLI_VERSION: ${LARK_CLI_VERSION:-1.0.90}
         GH_VERSION: ${GH_VERSION:-2.103.3}
-    image: dsh-superagent-project:${SUPERAGENT_REF}
+    image: dsh-collaborationagent:${SUPERAGENT_REF}
     env_file:
       - .env
     restart: unless-stopped
@@ -78,4 +78,5 @@ volumes:
 networks:
   dsh-shared:
     external: true
+
 
