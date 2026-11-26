@@ -24,6 +24,7 @@ import { DshExecutor, sourceTrigger, triggerMessage, workerSessionId } from '../
 import { ticketCard } from './cards.ts'
 import { MasterAssessor } from './assessment.ts'
 import { KV } from '../kv.ts'
+import { planReference } from './result-routing.ts'
 import { Store } from './store.ts'
 import { evalsHealth } from './views/overview.ts'
 import { TextCache } from './cache.ts'
@@ -197,7 +198,23 @@ export class Runtime extends Service implements SourceHost {
     return ticketEnvironment({ deployment, sources, settings: this.store.settings(), ticket, ...trigger ? { trigger } : {} })
   }
   checkSetup(): void { this.setup.check() }
-  receive(trigger: Trigger): ReceiveResult { return this.passes.receive(trigger) }
+  receive(trigger: Trigger): ReceiveResult {
+    // A pull request that names its plan is a result submission: attach it to the plan's ticket
+    // instead of letting the assessment judge it as a new request.
+    const plan = trigger.source === 'github' ? planReference(trigger.text ?? '') : undefined
+    const result = this.passes.receive(trigger)
+    if (plan === undefined || result !== 'stored') return result
+    const link = this.store.get(KV.planLink(plan))
+    if (!link) return result
+    const ticket = this.store.tickets.get(link.ticketId)
+    if (!ticket || ticket.ended) return result
+    try {
+      this.engine.attach(link.ticketId, trigger.id, `Pull request for plan #${plan}: the role's submitted result`)
+      return 'stored'
+    } catch {
+      return result
+    }
+  }
   idle(): Promise<void> { return this.passes.idle() }
   pump(): Promise<void> { return this.passes.pump() }
   sendReplies(): Promise<void> { return this.outbox.sent() }
