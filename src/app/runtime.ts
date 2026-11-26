@@ -216,10 +216,28 @@ export class Runtime extends Service implements SourceHost {
         ? `PR #${meta.number ?? '?'} 推送了新提交（返工版本）：请在本线程回帖说明已收到，并 @ 需要重看或继续的人。`
         : `Pull request for plan #${plan}: the role's submitted result`
       this.engine.attach(link.ticketId, trigger.id, note)
+      if (meta.kind === 'push') this.notifyPush(ticket, trigger)
       return 'stored'
     } catch {
       return result
     }
+  }
+
+  /**
+   * Posts a push notice to the ticket's IM conversation by the host itself, so a reworked pull request
+   * always reaches the thread even when the Coordinator decides not to speak.
+   * At most one notice per ticket a minute, and one per head commit.
+   */
+  private notifyPush(ticket: Ticket, trigger: Trigger): void {
+    const meta = trigger.meta as { number?: number; sha?: string }
+    const channel = ticket.channels.find(item => item.source === 'feishu')
+    if (!channel || !meta.sha) return
+    const recent = this.store.get(KV.notice.push(ticket.id))
+    if (recent && Date.now() - Date.parse(recent) < 60_000) return
+    const subject = /「([^」]+)」/.exec(trigger.text ?? '')?.[1]
+    const text = `PR #${meta.number ?? '?'} 有新提交（${meta.sha.slice(0, 7)}${subject ? `「${subject}」` : ''}），返工版本已记录。`
+    this.outbox.send({ id: key('push-notice', ticket.id, meta.sha), kind: 'notice', channel, text, ticketId: ticket.id })
+    this.store.set(KV.notice.push(ticket.id), new Date().toISOString())
   }
   idle(): Promise<void> { return this.passes.idle() }
   pump(): Promise<void> { return this.passes.pump() }
