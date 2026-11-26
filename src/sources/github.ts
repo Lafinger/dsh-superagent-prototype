@@ -5,7 +5,7 @@ import { sameName } from '../infra/text.ts'
 import { GithubAccountsSchema } from '../deployment.ts'
 import { CliError, validItems, type Tally } from '../infra/commands.ts'
 import { ciCounts, ciFact, ciFailures, ciSummary, githubThreadContext, pullChecks } from './github-read.ts'
-import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullTrigger, SOURCE }
+import { branchCiTrigger, ciTrigger, commentTrigger, CommentSchema, githubAddress, issueTrigger, IssueSchema, pullPushTrigger, pullTrigger, SOURCE }
   from './github-trigger.ts'
 import { githubLink, sendGithub } from './github-channel.ts'
 import type { GithubComment, PullRef } from './github-trigger.ts'
@@ -186,6 +186,10 @@ async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
     catch (error) { if (!stopped(ctx, round)) round.failures.push(`${stream.id}: ${String(error)}`) }
   }
   // When CI observation is turned off, clear the failure baseline but preserve the revision counter so future triggers have unique IDs.
+  if (config.observePulls) {
+    try { await pollPullHeads(ctx, round) }
+    catch (error) { if (!stopped(ctx, round)) round.failures.push(`pulls: ${String(error)}`) }
+  }
   if (!config.observeCi) {
     const seen = ctx.state.get(KV.github.branchCi)
     ctx.state.set(KV.github.branchCi, seen && { revision: seen.revision })
@@ -194,6 +198,40 @@ async function pollRepository(ctx: SourceContext, round: Round): Promise<void> {
   try { await pollBranchCi(ctx, round) }
   catch (error) { if (!stopped(ctx, round)) round.failures.push(`default branch CI: ${String(error)}`) }
 }
+/** A pull request as the list endpoint returns it; only the fields the push watch needs. */
+const PullListSchema = z.looseObject({
+  number: z.number(), title: z.string(), body: z.string().nullish(), state: z.string().optional(),
+  html_url: z.string().nullish(), created_at: z.string().nullish(),
+  user: z.looseObject({ login: z.string() }), head: z.looseObject({ sha: z.string() }),
+})
+
+/**
+ * Emits a Trigger when an open pull request's head commit changes, so a rework or a force push reaches the ticket.
+ * The first sight of a PR only records its head as the baseline, and repeats within a minute are skipped.
+ */
+async function pollPullHeads(ctx: SourceContext, round: Round): Promise<void> {
+  const commands = ctx.commands.withSignal(round.signal)
+  const pulls = await commands.api(z.array(PullListSchema), 'pulls?state=all&sort=updated&direction=desc&per_page=30')
+  const { login } = ctx.deployment.github
+  for (const pull of pulls) {
+    if (stopped(ctx, round)) throw new Error('The GitHub Source stopped during the poll')
+    const sha = pull.head.sha
+    const previous = ctx.state.get(KV.github.pullHead(pull.number))
+    if (previous === undefined) { ctx.state.set(KV.github.pullHead(pull.number), sha); continue }
+    if (previous === sha) continue
+    if ((pull.state ?? 'open') !== 'open' || sameName(pull.user.login, login)) {
+      ctx.state.set(KV.github.pullHead(pull.number), sha)
+      continue
+    }
+    const notified = ctx.state.get(KV.github.pullNotify(pull.number))
+    if (notified && Date.parse(round.started) - Date.parse(notified) < 60_000) continue
+    const opened = { ...pull, body: pull.body ?? '', created_at: pull.created_at ?? round.started } as unknown as Parameters<typeof pullPushTrigger>[0]
+    await ctx.receive(pullPushTrigger(opened, sha, round.started, login))
+    ctx.state.set(KV.github.pullHead(pull.number), sha)
+    ctx.state.set(KV.github.pullNotify(pull.number), round.started)
+  }
+}
+
 /**
  * Polls one repository-wide event stream (oldest first) since its cursor and steps the cursor to five seconds before the
  * newest item (`cursorAt`), relying on Trigger ID deduplication so repeated messages are no-ops. While the cursor stays
