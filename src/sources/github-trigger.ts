@@ -104,7 +104,7 @@ export function pullPushTrigger(pull: Opened, sha: string, at: string, agent: st
     ...base,
     id: key('github-push', String(pull.number), sha),
     at,
-    text: `${pull.title}\n\n${pull.body ?? ''}\n\nPR #${pull.number} 推送了新提交 ${sha.slice(0, 7)}${subject ? `「${subject}」` : ''}（返工版本）。\n请在本话题回复一句"已收到返工版本"，并 @ 需要重看的人；这是一次版本变更通知，不是新的需求。`,
+    text: `${pull.title}\n\n${pull.body ?? ''}\n\nPR #${pull.number} 推送了新提交 ${sha.slice(0, 7)}${subject ? `「${subject}」` : ''}（返工版本）`,
     meta: { ...base.meta, kind: 'push', sha },
   }
 }
@@ -120,3 +120,4 @@ export function ciTrigger(pr: { number: number; html_url: string; user: { login:
     text: summary, channel: githubChannel(pr.number), url: pr.html_url,
     meta: { number: pr.number, isPr: true, prAuthor: pr.user.login, ci: true, revision } }
 }
+

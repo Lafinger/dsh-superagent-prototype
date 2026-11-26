@@ -510,7 +510,7 @@ async function createProject(input) {
       directMessages: input.directMessages,
       otherChats: input.otherChats,
       repository,
-      observe: input.observe,
+      observe: input.observe ?? { observeIssues: true, observePulls: true, observeComments: true, observeCi: true },
       // 未显式给飞书准入时，用审批人与各岗位的 open_id 兜底
       feishuAllowed: normalizeUsers(input.feishuAllowed).length
         ? normalizeUsers(input.feishuAllowed)

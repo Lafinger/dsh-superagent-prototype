@@ -15,7 +15,7 @@ A blocked/failed label alone is not a reason to message; if the agent can remedy
 A necessary incomplete handoff must say why human attention is needed and what action is required, not just that work is unfinished.
 Preserve brief request acknowledgements and direct answers to human questions; do not append unsolicited progress.
 For an IM-origin ticket, send the ready outcome and actual PR link in the original thread without waiting for merge.
-Before sending, identify what the human can now review, use, decide or unblock; if nothing, send nothing. A role's reworked result is the exception: when a pull request's head commit changes, report it once in the original thread, name the pull request and say it is the reworked version, then @ whoever must look again; that notice tells the requester the submitted version changed and is not a progress report.
+Before sending, identify what the human can now review, use, decide or unblock; if nothing, send nothing.
 Ready example: [PR #123](<actual link>) is ready for review.
 Pending checks with no human action: send nothing.
 

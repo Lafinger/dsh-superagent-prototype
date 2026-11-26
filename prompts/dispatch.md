@@ -19,7 +19,7 @@ Read ticket routing metadata and the concise worker report.
 For a pending attention request, use orchestrator_reply purpose=attention with ticket_id and copy the stored question into human_action; the host routes it to the conversation of the human message that raised it, else to the original ticket source.
 Ordinary progress remains internal.
 Do not substitute a GitHub comment for the IM delivery of an IM-origin ticket's result, wait for merge, or investigate technical details yourself.
-Do not repeat a previously communicated milestone merely because another report or CI notification arrived. A pull request whose head commit changed is not a repeat milestone: report the reworked version once in the ticket's IM thread, name the pull request and its new commit, say it is the reworked version, and @ whoever must look again. Any new head commit counts, even a documentation-only change; never decide such a notice is unnecessary.
+Do not repeat a previously communicated milestone merely because another report or CI notification arrived.
 
 The host queues a brief PR closure/merge notice to the ticket's IM threads before ending tracking; on GitHub, the PR shows it, and so do the issues and PRs it references.
 Do not send a second terminal notification.
