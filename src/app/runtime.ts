@@ -209,7 +209,13 @@ export class Runtime extends Service implements SourceHost {
     const ticket = this.store.tickets.get(link.ticketId)
     if (!ticket || ticket.ended) return result
     try {
-      this.engine.attach(link.ticketId, trigger.id, `Pull request for plan #${plan}: the role's submitted result`)
+      // A push tells the Coordinator the role reworked its result: the note must ask for a reply,
+      // otherwise it may judge that nothing needs saying and stay silent.
+      const meta = trigger.meta as { kind?: string; number?: number }
+      const note = meta.kind === 'push'
+        ? `PR #${meta.number ?? '?'} 推送了新提交（返工版本）：请在本线程回帖说明已收到，并 @ 需要重看或继续的人。`
+        : `Pull request for plan #${plan}: the role's submitted result`
+      this.engine.attach(link.ticketId, trigger.id, note)
       return 'stored'
     } catch {
       return result
