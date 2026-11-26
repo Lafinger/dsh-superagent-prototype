@@ -98,13 +98,13 @@ export function pullTrigger(pull: Opened, agent: string): Trigger {
  * Builds the trigger for a new head commit on an open PR (a rework or a force push).
  * The ID carries the head SHA, so every push is a distinct Trigger while a PR's first sight only sets the baseline.
  */
-export function pullPushTrigger(pull: Opened, sha: string, at: string, agent: string): Trigger {
+export function pullPushTrigger(pull: Opened, sha: string, at: string, agent: string, subject?: string): Trigger {
   const base = pullTrigger(pull, agent)
   return {
     ...base,
     id: key('github-push', String(pull.number), sha),
     at,
-    text: `${pull.title}\n\n${pull.body ?? ''}\n\nPR #${pull.number} 推送了新提交 ${sha.slice(0, 7)}（返工版本）`,
+    text: `${pull.title}\n\n${pull.body ?? ''}\n\nPR #${pull.number} 推送了新提交 ${sha.slice(0, 7)}${subject ? `「${subject}」` : ''}（返工版本）。\n请在本话题回复一句"已收到返工版本"，并 @ 需要重看的人；这是一次版本变更通知，不是新的需求。`,
     meta: { ...base.meta, kind: 'push', sha },
   }
 }

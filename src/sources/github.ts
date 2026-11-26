@@ -226,7 +226,13 @@ async function pollPullHeads(ctx: SourceContext, round: Round): Promise<void> {
     const notified = ctx.state.get(KV.github.pullNotify(pull.number))
     if (notified && Date.parse(round.started) - Date.parse(notified) < 60_000) continue
     const opened = { ...pull, body: pull.body ?? '', created_at: pull.created_at ?? round.started } as unknown as Parameters<typeof pullPushTrigger>[0]
-    await ctx.receive(pullPushTrigger(opened, sha, round.started, login))
+    // One extra call per push: the new commit's subject tells the Coordinator what changed.
+    let subject: string | undefined
+    try {
+      const commit = await commands.api(z.looseObject({ commit: z.looseObject({ message: z.string() }) }), `commits/${sha}`)
+      subject = commit.commit.message.split('\n')[0]?.slice(0, 80)
+    } catch { /* the notice still works without it */ }
+    await ctx.receive(pullPushTrigger(opened, sha, round.started, login, subject))
     ctx.state.set(KV.github.pullHead(pull.number), sha)
     ctx.state.set(KV.github.pullNotify(pull.number), round.started)
   }
