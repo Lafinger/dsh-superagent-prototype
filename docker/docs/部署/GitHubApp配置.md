@@ -1,5 +1,7 @@
 # GitHub App 部署配置步骤（含 DSH 适配说明）
 
+
+> 版本 v1.0 ｜ 状态：操作指南 ｜ 更新：2026-11-27
 > 先讲清一个硬约束，避免白忙：**DSH 当前只支持"用户账号"的 gh 令牌，不支持 GitHub App 安装令牌。**
 > - 启动校验 `src/deployment.ts:87-105` 会执行 `gh api user` 取 `login` 和 `id`（提交邮箱也由 `id+login` 推出）。
 > - GitHub App 的**安装令牌（`ghs_…`）不能调用 `/user`**（返回 `Resource not accessible by integration`），会触发 setup 的 `agentCliSignedOut / agentCliNoAccount`。
@@ -121,7 +123,7 @@ curl -s -H "Authorization: Bearer ghs_xxx" https://api.github.com/user
 | 维护成本 | 低 | 高 |
 | 适用 | 个人仓库/少数仓库 | 组织统一治理、无个人机器账号 |
 
-**结论**：当前项目（个人私有仓库）用**机器用户**最划算，见 [bot-github-account-setup.md](./bot-github-account-setup.md) 与 `docker/switch-github-bot.ps1`。若你确实要走 App，我可以按 Part B 把改造做掉（deployment 解析 + 令牌刷新器 + compose 密钥 + 测试），预计改动 4 个文件。
+**结论**：当前项目（个人私有仓库）用**机器用户**最划算，见 [bot-github-account-setup.md](./机器人GitHub账号配置.md) 与 `docker/switch-github-bot.ps1`。若你确实要走 App，我可以按 Part B 把改造做掉（deployment 解析 + 令牌刷新器 + compose 密钥 + 测试），预计改动 4 个文件。
 
 ---
 
@@ -131,3 +133,4 @@ curl -s -H "Authorization: Bearer ghs_xxx" https://api.github.com/user
 - 面板 `setup.problem=null`、`github=ready`
 - 建测试 issue/PR，作者为 `<slug>[bot]`
 - `hosts.yml` 的 `oauth_token` 在 1 小时内被刷新（看刷新日志/`expires_at`）
+

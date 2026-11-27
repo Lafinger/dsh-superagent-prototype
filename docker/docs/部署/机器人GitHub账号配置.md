@@ -1,5 +1,7 @@
 # 专用 Bot GitHub 账号 · 配置清单
 
+
+> 版本 v1.0 ｜ 状态：操作指南 ｜ 更新：2026-11-27
 > 目标：让 DSH 的 Project Worker 用**独立 bot 账号**操作 GitHub，使 plan/task issue、PR、评论的作者显示为 bot，而不是你个人账号。
 
 ## 0. 原理（先理解为什么）

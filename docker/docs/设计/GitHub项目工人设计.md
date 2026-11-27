@@ -1,6 +1,8 @@
 # 设计：GitHub 资料库 + 统一的 Project Worker
 
-> 状态：设计稿（未改代码，待评审）。配套决策见 [ADR 0003](adr/0003-github-as-project-library-and-project-worker.md)。
+
+> 版本 v1.0 ｜ 状态：已实现 ｜ 更新：2026-11-27
+> 状态：设计稿（未改代码，待评审）。配套决策见 [ADR 0003](../adr/0003-github-as-project-library-and-project-worker.md)。
 > 本稿已按最新决定修订：**取消「Project Worker / Code Worker」两类并存**，改为 **Project Worker 统一取代 Code Worker**；`cordis.patch.yml` 删除旧 `dsh-superagent-worker-preset`、新增 `dsh-superagent-worker-project-preset`；不再保留“快速改代码”能力。
 > 2026-11-05 更新（ADR 0004）：Project Worker 角色改为**协调者**——只归档资料、出计划、跟踪产品/前端各自提交的成果，**不执行、不验收、不合并**；下文“推进 / 提交成果 PR”的措辞按此更新理解。
 > 2026-11-06 更新（ADR 0005）：岗位不再写死，改由项目仓库的 `settings/team.yml` 定义；协调者读它决定岗位/人员/@ 谁/谁审批合并。
@@ -131,3 +133,4 @@
 - **单项目/仓库**：MVP 假设一仓库一项目；多项目需目录命名空间或 Milestone 区分。
 - **并发与重复**：同一请求重复触发可能重复建单，需幂等键（issue 号 + 阶段）。
 - **安全**：worker 以容器内 `gh` 身份操作仓库，须限定到测试仓库、最小 token 权限。
+
