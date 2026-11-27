@@ -231,12 +231,12 @@ async function pollPullHeads(ctx: SourceContext, round: Round): Promise<void> {
     try {
       const commit = await commands.api(z.looseObject({ commit: z.looseObject({ message: z.string() }) }), `commits/${sha}`)
       subject = commit.commit.message.split('\n')[0]?.slice(0, 80)
-    } catch { /* the notice still works without it */ }
+    } catch { /* the notice works without it */ }
     await ctx.receive(pullPushTrigger(opened, sha, round.started, login, subject))
     ctx.state.set(KV.github.pullHead(pull.number), sha)
     ctx.state.set(KV.github.pullNotify(pull.number), round.started)
   }
-}
+  }
 
 /**
  * Polls one repository-wide event stream (oldest first) since its cursor and steps the cursor to five seconds before the

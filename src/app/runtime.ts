@@ -199,8 +199,6 @@ export class Runtime extends Service implements SourceHost {
   }
   checkSetup(): void { this.setup.check() }
   receive(trigger: Trigger): ReceiveResult {
-    // A pull request that names its plan is a result submission: attach it to the plan's ticket
-    // instead of letting the assessment judge it as a new request.
     const plan = trigger.source === 'github' ? planReference(trigger.text ?? '') : undefined
     const result = this.passes.receive(trigger)
     if (plan === undefined || result !== 'stored') return result
@@ -209,8 +207,6 @@ export class Runtime extends Service implements SourceHost {
     const ticket = this.store.tickets.get(link.ticketId)
     if (!ticket || ticket.ended) return result
     try {
-      // A push tells the Coordinator the role reworked its result: the note must ask for a reply,
-      // otherwise it may judge that nothing needs saying and stay silent.
       const meta = trigger.meta as { kind?: string; number?: number }
       const note = meta.kind === 'push'
         ? `PR #${meta.number ?? '?'} 推送了新提交（返工版本）：请在本线程回帖说明已收到，并 @ 需要重看或继续的人。`
@@ -320,4 +316,6 @@ function publishTimesheet(store: Store, deployment: Deployment, ticket: Ticket):
     }
   })
 }
+
+
 
