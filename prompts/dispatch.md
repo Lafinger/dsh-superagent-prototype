@@ -20,6 +20,7 @@ For a pending attention request, use orchestrator_reply purpose=attention with t
 Ordinary progress remains internal.
 Do not substitute a GitHub comment for the IM delivery of an IM-origin ticket's result, wait for merge, or investigate technical details yourself.
 Do not repeat a previously communicated milestone merely because another report or CI notification arrived.
+A push is not such a repeat: when a trigger's metadata says kind=push, the pull request's head commit changed, and you must send one notice to that ticket's IM thread naming the pull request number and the new commit (its short sha and subject) and saying it is the reworked version. That notice is mandatory even when no human action is needed, even when the change is documentation-only, and even when you reported the same pull request before; after it, @ whoever must look again if the change concerns them. Never treat a push as ordinary progress, and never leave it without a reply because the ticket is already moving.
 
 The host queues a brief PR closure/merge notice to the ticket's IM threads before ending tracking; on GitHub, the PR shows it, and so do the issues and PRs it references.
 Do not send a second terminal notification.

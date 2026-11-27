@@ -98,6 +98,16 @@ export function pullTrigger(pull: Opened, agent: string): Trigger {
  * Builds the trigger for a new head commit on an open PR (a rework or a force push).
  * The ID carries the head SHA, so every push is a distinct Trigger while a PR's first sight only sets the baseline.
  */
+export function pullPushTrigger(pull: Opened, sha: string, at: string, agent: string, subject?: string): Trigger {
+  const base = pullTrigger(pull, agent)
+  return {
+    ...base,
+    id: key('github-push', String(pull.number), sha),
+    at,
+    text: `${pull.title}\n\n${pull.body ?? ''}\n\nPR #${pull.number} 推送了新提交 ${sha.slice(0, 7)}${subject ? `「${subject}」` : ''}（返工版本，head 提交已改变）。`,
+    meta: { ...base.meta, kind: 'push', sha },
+  }
+}
 /** Builds a trigger for a default-branch CI transition; default-branch CI has no person to reply to, so it has no `channel`. */
 export function branchCiTrigger(branch: string, sha: string, revision: number, summary: string, url: string): Trigger {
   return { id: key('github-ci', `branch:${branch}`, String(revision)), source: SOURCE,
@@ -110,4 +120,3 @@ export function ciTrigger(pr: { number: number; html_url: string; user: { login:
     text: summary, channel: githubChannel(pr.number), url: pr.html_url,
     meta: { number: pr.number, isPr: true, prAuthor: pr.user.login, ci: true, revision } }
 }
-
